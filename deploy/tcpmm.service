@@ -1,0 +1,22 @@
+[Unit]
+Description=Tri-Cities Punk Metal and More
+After=network.target
+
+[Service]
+Type=simple
+User=tcpmm
+Group=tcpmm
+WorkingDirectory=/opt/tcpmm
+EnvironmentFile=/etc/tcpmm.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server/app.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tcpmm
+
+[Install]
+WantedBy=multi-user.target

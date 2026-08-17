@@ -1,0 +1,128 @@
+let csrfToken = ''
+let currentAdminId = null
+let content = { events: [], news: [], submissions: [], admins: [], settings: {} }
+let submissionFilter = 'all'
+let submissionsLoading = false
+const $ = (selector) => document.querySelector(selector)
+const status = (message, error = false) => { const node = $('#status'); node.textContent = message; node.style.color = error ? '#ff7187' : '#ff2948' }
+const api = async (url, options = {}) => {
+  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers } })
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `Request failed: ${response.status}`) }
+  return response.status === 204 ? null : response.json()
+}
+const formObject = (form) => Object.fromEntries(new FormData(form).entries())
+const setAuthenticated = async (session) => {
+  csrfToken = session.csrfToken
+  currentAdminId = session.id
+  $('#operator').textContent = `OPERATOR: ${session.username}`
+  $('#logout').hidden = false; $('#login-view').hidden = true; $('#control-view').hidden = false
+  await loadContent()
+}
+const loadContent = async () => { content = await api('/api/admin/content'); fillSettings(); renderSubmissions(); renderEvents(); renderNews(); renderUsers() }
+const fillSettings = () => Object.entries(content.settings).forEach(([key, value]) => { const field = $(`#settings-form [name="${key}"]`); if (field) field.value = value })
+const renderEvents = () => { $('#event-list').innerHTML = content.events.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${item.event_date} // ${escapeHtml(item.venue)}, ${escapeHtml(item.city)} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div><button data-edit-event="${item.id}">EDIT</button><button class="danger" data-delete-event="${item.id}">DELETE</button></div></article>`).join('') }
+const renderNews = () => { $('#news-list').innerHTML = content.news.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.label)} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div><button data-edit-news="${item.id}">EDIT</button><button class="danger" data-delete-news="${item.id}">DELETE</button></div></article>`).join('') }
+const renderSubmissions = () => {
+  const unread = content.submissions.filter((item) => !item.reviewed).length
+  const reviewed = content.submissions.length - unread
+  $('#submission-count').textContent = unread ? `[${unread}]` : ''
+  $('#submission-new-count').textContent = unread
+  $('#submission-reviewed-count').textContent = reviewed
+  $('#submission-total-count').textContent = content.submissions.length
+  document.title = unread ? `(${unread}) TCPM&M // CONTROL` : 'TCPM&M // CONTROL'
+  const visible = content.submissions.filter((item) => submissionFilter === 'all' || (submissionFilter === 'reviewed') === Boolean(item.reviewed))
+  $('#submission-list').innerHTML = visible.length ? visible.map((item) => `<article class="submission-record${item.reviewed ? ' reviewed' : ''}">
+    <div class="submission-head"><div><strong>${escapeHtml(item.venue)}</strong><span>${escapeHtml(item.event_date)} · RECEIVED ${escapeHtml(item.created_at)}</span></div>${item.reviewed ? '<b class="draft">[REVIEWED]</b>' : '<b class="current">[NEW]</b>'}</div>
+    <dl><dt>CONTACT</dt><dd>${escapeHtml(item.contact || 'Not provided')}</dd><dt>ADDRESS</dt><dd>${escapeHtml(item.address)}</dd><dt>LINEUP</dt><dd>${escapeHtml(item.lineup)}</dd><dt>DESCRIPTION</dt><dd>${escapeHtml(item.description)}</dd></dl>
+    <div class="actions"><button data-promote-submission="${item.id}">CREATE EVENT</button><button data-edit-submission="${item.id}">EDIT</button><button data-review-submission="${item.id}" data-reviewed="${item.reviewed ? 'true' : 'false'}">${item.reviewed ? 'MARK NEW' : 'MARK REVIEWED'}</button><button class="danger" data-delete-submission="${item.id}">DELETE</button></div>
+  </article>`).join('') : `<p class="empty">NO ${submissionFilter === 'all' ? '' : `${submissionFilter.toUpperCase()} `}SHOW SUBMISSIONS.</p>`
+}
+const loadSubmissions = async (announce = false) => {
+  if (submissionsLoading || !csrfToken) return
+  submissionsLoading = true
+  try {
+    const data = await api('/api/admin/submissions')
+    content.submissions = data.submissions
+    renderSubmissions()
+    const updated = $('#submission-updated')
+    updated.textContent = `LAST CHECKED ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    if (announce) status('SUBMISSION INBOX REFRESHED')
+  } catch (error) { if (announce) status(error.message, true) }
+  finally { submissionsLoading = false }
+}
+const renderUsers = () => { $('#user-list').innerHTML = content.admins.map((item) => `<article class="record"><div><strong>${escapeHtml(item.username)} ${item.id === currentAdminId ? '<b class="current">[CURRENT]</b>' : ''}</strong><span>CREATED ${escapeHtml(item.created_at)}</span></div><div><button data-edit-user="${item.id}">EDIT</button><button class="danger" data-delete-user="${item.id}"${item.id === currentAdminId ? ' disabled title="You cannot delete your own account"' : ''}>DELETE</button></div></article>`).join('') }
+const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char])
+const openEditor = (type, item = null) => {
+  const form = $(`#${type}-form`); form.reset(); form.hidden = false
+  if (item) Object.entries(item).forEach(([key, value]) => { const field = form.elements.namedItem(key); if (!field) return; if (field.type === 'checkbox') field.checked = Boolean(value); else field.value = value })
+  else { form.elements.namedItem('published').checked = true; form.elements.namedItem('id').value = '' }
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+const openUserEditor = (item = null) => {
+  const form = $('#user-form'); form.reset(); form.hidden = false
+  form.elements.namedItem('id').value = item?.id || ''
+  form.elements.namedItem('username').value = item?.username || ''
+  form.elements.namedItem('password').required = !item
+  $('#password-help').textContent = item ? 'Leave blank to keep current password' : '12–128 characters'
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+const openSubmissionEditor = (item) => {
+  const form = $('#submission-editor'); form.reset(); form.hidden = false
+  Object.entries(item).forEach(([key, value]) => { const field = form.elements.namedItem(key); if (!field) return; if (field.type === 'checkbox') field.checked = Boolean(value); else field.value = value })
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+const promoteSubmission = (item) => {
+  document.querySelector('nav button[data-view="events"]').click()
+  openEditor('event')
+  const form = $('#event-form')
+  form.elements.namedItem('source_submission_id').value = item.id
+  form.elements.namedItem('event_date').value = item.event_date
+  form.elements.namedItem('venue').value = item.venue
+  form.elements.namedItem('lineup').value = item.lineup.slice(0, 300)
+  form.elements.namedItem('published').checked = false
+  status('COMPLETE EVENT DETAILS // SOURCE SUBMISSION WILL BE MARKED REVIEWED')
+}
+$('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const data = formObject(event.currentTarget); await setAuthenticated(await api('/api/admin/login', { method:'POST', body:JSON.stringify(data) })) } catch (error) { alert(error.message) } })
+$('#logout').addEventListener('click', async () => { await api('/api/admin/logout', { method:'POST' }); location.reload() })
+document.querySelectorAll('nav button').forEach((button) => button.addEventListener('click', () => { document.querySelectorAll('nav button').forEach((item) => item.classList.toggle('active', item === button)); document.querySelectorAll('.view').forEach((view) => { view.hidden = view.id !== `${button.dataset.view}-view` }) }))
+$('#settings-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/api/admin/settings', { method:'PUT', body:JSON.stringify(formObject(event.currentTarget)) }); status('SETTINGS WRITTEN'); await loadContent() } catch (error) { status(error.message, true) } })
+$('#new-event').addEventListener('click', () => openEditor('event'))
+$('#new-news').addEventListener('click', () => openEditor('news'))
+$('#new-user').addEventListener('click', () => openUserEditor())
+$('#refresh-submissions').addEventListener('click', () => loadSubmissions(true))
+document.querySelectorAll('[data-submission-filter]').forEach((button) => button.addEventListener('click', () => {
+  submissionFilter = button.dataset.submissionFilter
+  document.querySelectorAll('[data-submission-filter]').forEach((item) => item.classList.toggle('active', item === button))
+  renderSubmissions()
+}))
+document.querySelectorAll('.cancel').forEach((button) => button.addEventListener('click', () => { button.closest('form').hidden = true }))
+const saveRecord = async (event, type) => { event.preventDefault(); const form = event.currentTarget; const data = formObject(form); data.featured = form.elements.namedItem('featured').checked; data.published = form.elements.namedItem('published').checked; const id = data.id; delete data.id; try { await api(`/api/admin/${type}${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`${type.toUpperCase()} WRITTEN`); await loadContent() } catch (error) { status(error.message, true) } }
+$('#event-form').addEventListener('submit', (event) => saveRecord(event, 'events'))
+$('#news-form').addEventListener('submit', (event) => saveRecord(event, 'news'))
+$('#submission-editor').addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = event.currentTarget; const data = formObject(form); const id = data.id; delete data.id
+  data.reviewed = form.elements.namedItem('reviewed').checked
+  try { await api(`/api/admin/submissions/${id}`, { method:'PUT', body:JSON.stringify(data) }); form.hidden = true; status('SUBMISSION WRITTEN'); await loadSubmissions() }
+  catch (error) { status(error.message, true) }
+})
+$('#user-form').addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = event.currentTarget; const data = formObject(form); const id = data.id; delete data.id
+  try { await api(`/api/admin/users${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`ADMINISTRATOR ${id ? 'UPDATED' : 'CREATED'}`); await loadContent() }
+  catch (error) { status(error.message, true) }
+})
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('button'); if (!button) return
+  if (button.dataset.editEvent) openEditor('event', content.events.find((item) => item.id === Number(button.dataset.editEvent)))
+  if (button.dataset.editNews) openEditor('news', content.news.find((item) => item.id === Number(button.dataset.editNews)))
+  if (button.dataset.editUser) openUserEditor(content.admins.find((item) => item.id === Number(button.dataset.editUser)))
+  if (button.dataset.editSubmission) openSubmissionEditor(content.submissions.find((item) => item.id === Number(button.dataset.editSubmission)))
+  if (button.dataset.promoteSubmission) promoteSubmission(content.submissions.find((item) => item.id === Number(button.dataset.promoteSubmission)))
+  if (button.dataset.reviewSubmission) { try { await api(`/api/admin/submissions/${button.dataset.reviewSubmission}/reviewed`, { method:'PUT', body:JSON.stringify({ reviewed: button.dataset.reviewed !== 'true' }) }); status('SUBMISSION UPDATED'); await loadContent() } catch (error) { status(error.message, true) } }
+  const type = button.dataset.deleteEvent ? 'events' : button.dataset.deleteNews ? 'news' : button.dataset.deleteUser ? 'users' : button.dataset.deleteSubmission ? 'submissions' : null
+  const id = button.dataset.deleteEvent || button.dataset.deleteNews || button.dataset.deleteUser || button.dataset.deleteSubmission
+  if (type && id && confirm('Permanently delete this record?')) { try { await api(`/api/admin/${type}/${id}`, { method:'DELETE' }); status('RECORD DELETED'); await loadContent() } catch (error) { status(error.message, true) } }
+})
+api('/api/admin/session').then(setAuthenticated).catch(() => {})
+window.setInterval(() => { if (!document.hidden && !$('#submissions-view').hidden) void loadSubmissions() }, 15_000)

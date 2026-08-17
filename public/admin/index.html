@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>TCPM&M // CONTROL</title>
+  <link rel="stylesheet" href="/admin/admin.css" />
+</head>
+<body>
+  <main class="shell">
+    <header><div><span>NODE://WA-509</span><h1>TCPM&M CONTROL</h1></div><div class="session"><span id="operator"></span><button id="logout" hidden>LOG OUT</button></div></header>
+    <section id="login-view" class="login panel">
+      <p class="prompt">AUTHENTICATION REQUIRED</p>
+      <form id="login-form">
+        <label>OPERATOR<input name="username" autocomplete="username" required /></label>
+        <label>PASSCODE<input name="password" type="password" autocomplete="current-password" required /></label>
+        <button>ESTABLISH SESSION</button>
+      </form>
+    </section>
+    <section id="control-view" hidden>
+      <nav><button data-view="settings" class="active">SITE</button><button data-view="submissions">MAIL <b id="submission-count"></b></button><button data-view="events">EVENTS</button><button data-view="news">NEWS</button><button data-view="users">USERS</button><a href="/" target="_blank">VIEW SITE ↗</a></nav>
+      <p id="status" role="status"></p>
+      <section id="settings-view" class="panel view">
+        <h2>// SITE + RADIO</h2>
+        <form id="settings-form" class="form-grid">
+          <label>HERO TITLE <small>Separate lines with |</small><input name="hero_title" required /></label>
+          <label class="wide">HERO TEXT<textarea name="hero_text" rows="3" required></textarea></label>
+          <label>RADIO STATUS<input name="radio_status" required /></label>
+          <label>RADIO TITLE<input name="radio_title" required /></label>
+          <label class="wide">RADIO MESSAGE<input name="radio_message" required /></label>
+          <button class="wide">WRITE SETTINGS</button>
+        </form>
+      </section>
+      <section id="submissions-view" class="panel view" hidden>
+        <div class="title-row"><div><h2>// SHOW SUBMISSIONS</h2><small>PRIVATE INBOX · AUTO-REFRESHES</small></div><button id="refresh-submissions">REFRESH</button></div>
+        <div class="inbox-toolbar">
+          <div class="inbox-metrics"><span><b id="submission-new-count">0</b> NEW</span><span><b id="submission-reviewed-count">0</b> REVIEWED</span><span><b id="submission-total-count">0</b> TOTAL</span></div>
+          <div class="inbox-filters" role="group" aria-label="Filter submissions"><button class="active" data-submission-filter="all">ALL</button><button data-submission-filter="new">NEW</button><button data-submission-filter="reviewed">REVIEWED</button></div>
+        </div>
+        <p class="inbox-updated" id="submission-updated" role="status"></p>
+        <form id="submission-editor" class="form-grid editor" hidden>
+          <input type="hidden" name="id" />
+          <label>DATE<input name="event_date" type="date" required /></label>
+          <label>TITLE<input name="title" maxlength="100" required /></label>
+          <label>VENUE<input name="venue" maxlength="100" required /></label>
+          <label>CITY<input name="city" maxlength="60" required /></label>
+          <label class="wide">ADDRESS<input name="address" maxlength="200" required /></label>
+          <label class="wide">LINEUP<textarea name="lineup" rows="3" maxlength="500" required></textarea></label>
+          <label>GENRE<select name="genre"><option>punk</option><option>metal</option><option>hardcore</option><option>other</option></select></label>
+          <label>PRICE<input name="price" maxlength="30" /></label>
+          <label>DOORS<input name="doors" maxlength="30" /></label>
+          <label class="wide">DESCRIPTION<textarea name="description" rows="4" maxlength="2000" required></textarea></label>
+          <label class="wide">CONTACT<input name="contact" maxlength="300" required /></label>
+          <label class="check"><input name="reviewed" type="checkbox" /> REVIEWED</label>
+          <div class="actions wide"><button>SAVE SUBMISSION</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <div id="submission-list" class="records submission-records"></div>
+      </section>
+      <section id="events-view" class="panel view" hidden>
+        <div class="title-row"><h2>// EVENTS</h2><button id="new-event">+ NEW EVENT</button></div>
+        <form id="event-form" class="form-grid editor" hidden>
+          <input type="hidden" name="id" />
+          <label>DATE<input name="event_date" type="date" required /></label>
+          <label>TITLE<input name="title" maxlength="100" required /></label>
+          <label>VENUE<input name="venue" maxlength="100" required /></label>
+          <label>CITY<input name="city" maxlength="60" required /></label>
+          <label class="wide">LINEUP<input name="lineup" maxlength="300" required /></label>
+          <label>GENRE<select name="genre"><option>punk</option><option>metal</option><option>hardcore</option><option>other</option></select></label>
+          <label>PRICE<input name="price" maxlength="30" /></label>
+          <label>DOORS<input name="doors" maxlength="30" /></label>
+          <label class="check"><input name="featured" type="checkbox" /> FEATURED</label>
+          <label class="check"><input name="published" type="checkbox" checked /> PUBLISHED</label>
+          <div class="actions wide"><button>SAVE EVENT</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <div id="event-list" class="records"></div>
+      </section>
+      <section id="news-view" class="panel view" hidden>
+        <div class="title-row"><h2>// NEWS</h2><button id="new-news">+ NEW STORY</button></div>
+        <form id="news-form" class="form-grid editor" hidden>
+          <input type="hidden" name="id" />
+          <label>LABEL<input name="label" maxlength="80" required /></label>
+          <label>TITLE<input name="title" maxlength="200" required /></label>
+          <label class="wide">SUMMARY<textarea name="summary" rows="3" maxlength="1000"></textarea></label>
+          <label>LOCAL LINK<input name="link" value="#" required /></label>
+          <label class="check"><input name="featured" type="checkbox" /> FEATURED</label>
+          <label class="check"><input name="published" type="checkbox" checked /> PUBLISHED</label>
+          <div class="actions wide"><button>SAVE STORY</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <div id="news-list" class="records"></div>
+      </section>
+      <section id="users-view" class="panel view" hidden>
+        <div class="title-row"><div><h2>// ADMINISTRATORS</h2><small>ALL ADMINISTRATORS HAVE FULL CONTROL</small></div><button id="new-user">+ NEW USER</button></div>
+        <form id="user-form" class="form-grid editor" hidden>
+          <input type="hidden" name="id" />
+          <label>USERNAME<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="off" required /></label>
+          <label>PASSWORD <small id="password-help">12–128 characters</small><input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" /></label>
+          <div class="actions wide"><button>SAVE USER</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <div id="user-list" class="records"></div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>
