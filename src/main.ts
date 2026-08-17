@@ -86,7 +86,7 @@ app.innerHTML = `
             <button type="submit" aria-label="Send message">↗</button>
           </div>
         </form>
-        <p class="local-note" id="chat-note">Public room · messages are saved on the server.</p>
+        <p class="local-note" id="chat-note" role="status"></p>
       </section>
     </aside>
 
@@ -101,7 +101,7 @@ app.innerHTML = `
 
       <section class="shows-section" id="shows" aria-labelledby="shows-title">
         <div class="heading-row">
-          <div><span class="section-index">01 / CALENDAR</span><h2 id="shows-title">UPCOMING NOISE</h2></div>
+          <div><span class="section-index">01 / CALENDAR</span><h2 id="shows-title">// UPCOMING SHOWS</h2></div>
           <p>NO ALGORITHMS.<br />JUST SHOWS.</p>
         </div>
         <div class="filters" role="group" aria-label="Filter shows by genre">
@@ -147,10 +147,10 @@ app.innerHTML = `
         <div class="section-bar radio-bar"><h2 id="radio-title">TCPM&M // RADIO</h2><span><i></i> <b id="radio-status">OFFLINE</b></span></div>
         <div class="radio-screen">
           <span class="frequency">509.0</span>
-          <div class="wave" aria-hidden="true">▂▅▃▇▆▂▁▅▇▃▆▂▅▁▇</div>
+          <div class="wave" id="radio-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <p>LIVE AUDIO<br />BROADCAST</p>
         </div>
-        <div class="now-playing"><span>NOW PLAYING</span><strong id="radio-track">NO SIGNAL</strong><small id="radio-message">Radio system reserved for phase two.</small></div>
+        <div class="now-playing"><span>NOW PLAYING</span><strong id="radio-track">NO SIGNAL</strong><small id="radio-message"></small></div>
         <div class="volume"><label for="radio-volume">VOL</label><input id="radio-volume" type="range" min="0" max="100" value="70" aria-label="Radio volume" /><span id="radio-volume-value">70</span><button id="radio-play" type="button" aria-label="Play radio">▶</button></div>
       </section>
 
@@ -248,6 +248,7 @@ radioAudio.volume = 0.7
 const radioPlay = document.querySelector<HTMLButtonElement>('#radio-play')
 const radioVolume = document.querySelector<HTMLInputElement>('#radio-volume')
 const radioVolumeValue = document.querySelector<HTMLElement>('#radio-volume-value')
+const radioWave = document.querySelector<HTMLElement>('#radio-wave')
 let radioPlaying = false
 
 const updateRadioStatus = async () => {
@@ -291,11 +292,17 @@ radioVolume?.addEventListener('input', () => {
 })
 radioAudio.addEventListener('error', () => {
   radioPlaying = false
+  radioWave?.classList.remove('playing')
   if (radioPlay) {
     radioPlay.textContent = '▶'
     radioPlay.setAttribute('aria-label', 'Play radio')
   }
 })
+radioAudio.addEventListener('playing', () => radioWave?.classList.add('playing'))
+radioAudio.addEventListener('pause', () => radioWave?.classList.remove('playing'))
+radioAudio.addEventListener('waiting', () => radioWave?.classList.remove('playing'))
+radioAudio.addEventListener('stalled', () => radioWave?.classList.remove('playing'))
+radioAudio.addEventListener('ended', () => radioWave?.classList.remove('playing'))
 void updateRadioStatus()
 window.setInterval(() => void updateRadioStatus(), 5000)
 
@@ -356,10 +363,10 @@ const loadChat = async (replace = false) => {
     const data = await response.json() as { messages: ChatMessage[] }
     mergeMessages(data.messages, replace || lastId === 0)
     if (chatStatus) chatStatus.textContent = 'LIVE · SERVER BACKED'
-    if (chatNote) chatNote.textContent = 'Public room · messages are saved on the server.'
+    if (chatNote) chatNote.textContent = ''
   } catch {
     if (chatStatus) chatStatus.textContent = 'RECONNECTING'
-    if (chatNote) chatNote.textContent = 'Chat is temporarily unavailable. Retrying…'
+    if (chatNote) chatNote.textContent = 'CHAT UNAVAILABLE · RETRYING'
   } finally {
     chatLoading = false
   }
@@ -393,7 +400,7 @@ chatForm?.addEventListener('submit', async (event) => {
     localStorage.setItem(chatNameKey, name)
     mergeMessages([data.message])
     if (messageInput) { messageInput.value = ''; messageInput.focus() }
-    if (chatNote) chatNote.textContent = 'Public room · messages are saved on the server.'
+    if (chatNote) chatNote.textContent = ''
   } catch (error) {
     if (chatNote) chatNote.textContent = error instanceof Error ? error.message : 'Message could not be sent'
   } finally {

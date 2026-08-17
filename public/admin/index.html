@@ -6,6 +6,7 @@
   <meta name="robots" content="noindex, nofollow" />
   <title>TCPM&M // CONTROL</title>
   <link rel="stylesheet" href="/admin/admin.css" />
+  <link rel="stylesheet" href="/admin/editor.css" />
 </head>
 <body>
   <main class="shell">
@@ -24,16 +25,16 @@
       <section id="settings-view" class="panel view">
         <h2>// SITE + RADIO</h2>
         <form id="settings-form" class="form-grid">
-          <label>HERO TITLE <small>Separate lines with |</small><input name="hero_title" required /></label>
+          <label>HERO TITLE (| = LINE BREAK)<input name="hero_title" required /></label>
           <label class="wide">HERO TEXT<textarea name="hero_text" rows="3" required></textarea></label>
           <label>RADIO STATUS<input name="radio_status" required /></label>
           <label>RADIO TITLE<input name="radio_title" required /></label>
           <label class="wide">RADIO MESSAGE<input name="radio_message" required /></label>
-          <button class="wide">WRITE SETTINGS</button>
+          <button class="wide">SAVE SETTINGS</button>
         </form>
       </section>
       <section id="submissions-view" class="panel view" hidden>
-        <div class="title-row"><div><h2>// SHOW SUBMISSIONS</h2><small>PRIVATE INBOX · AUTO-REFRESHES</small></div><button id="refresh-submissions">REFRESH</button></div>
+        <div class="title-row"><h2>// SHOW SUBMISSIONS</h2><button id="refresh-submissions">REFRESH</button></div>
         <div class="inbox-toolbar">
           <div class="inbox-metrics"><span><b id="submission-new-count">0</b> NEW</span><span><b id="submission-reviewed-count">0</b> REVIEWED</span><span><b id="submission-total-count">0</b> TOTAL</span></div>
           <div class="inbox-filters" role="group" aria-label="Filter submissions"><button class="active" data-submission-filter="all">ALL</button><button data-submission-filter="new">NEW</button><button data-submission-filter="reviewed">REVIEWED</button></div>
@@ -76,21 +77,40 @@
         <div id="event-list" class="records"></div>
       </section>
       <section id="news-view" class="panel view" hidden>
-        <div class="title-row"><h2>// NEWS</h2><button id="new-news">+ NEW STORY</button></div>
-        <form id="news-form" class="form-grid editor" hidden>
+        <div class="title-row"><h2>// NEWS + ARTICLES</h2><button id="new-news">+ NEW STORY</button></div>
+        <form id="news-form" class="form-grid editor news-editor" hidden>
           <input type="hidden" name="id" />
           <label>LABEL<input name="label" maxlength="80" required /></label>
           <label>TITLE<input name="title" maxlength="200" required /></label>
           <label class="wide">SUMMARY<textarea name="summary" rows="3" maxlength="1000"></textarea></label>
-          <label>LOCAL LINK<input name="link" value="#" required /></label>
+          <label>PAGE SLUG (/news/slug)<input name="slug" maxlength="80" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="generated-from-title" required /></label>
+          <label>LINK (IF NO ARTICLE)<input name="link" value="#news" /></label>
+          <div class="wide article-editor-field">
+            <div class="editor-label"><span>ARTICLE BODY</span></div>
+            <div class="wysiwyg-toolbar" role="toolbar" aria-label="Article formatting">
+              <button type="button" data-editor-command="formatBlock" data-editor-value="p">PARAGRAPH</button>
+              <button type="button" data-editor-command="formatBlock" data-editor-value="h2">HEADING</button>
+              <button type="button" data-editor-command="bold"><strong>B</strong></button>
+              <button type="button" data-editor-command="italic"><em>I</em></button>
+              <button type="button" data-editor-command="underline"><u>U</u></button>
+              <button type="button" data-editor-command="insertUnorderedList">• LIST</button>
+              <button type="button" data-editor-command="insertOrderedList">1. LIST</button>
+              <button type="button" data-editor-command="formatBlock" data-editor-value="blockquote">QUOTE</button>
+              <button type="button" data-editor-link>LINK</button>
+              <button type="button" data-editor-command="unlink">UNLINK</button>
+              <button type="button" data-editor-command="removeFormat">CLEAR</button>
+            </div>
+            <div id="article-editor" class="wysiwyg" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Article body" data-placeholder="Write the full article here…"></div>
+            <input type="hidden" name="body_html" />
+          </div>
           <label class="check"><input name="featured" type="checkbox" /> FEATURED</label>
           <label class="check"><input name="published" type="checkbox" checked /> PUBLISHED</label>
-          <div class="actions wide"><button>SAVE STORY</button><button type="button" class="secondary cancel">CANCEL</button></div>
+          <div class="actions wide"><button>SAVE STORY</button><button type="button" id="preview-news" class="secondary">PREVIEW</button><button type="button" class="secondary cancel">CANCEL</button></div>
         </form>
         <div id="news-list" class="records"></div>
       </section>
       <section id="users-view" class="panel view" hidden>
-        <div class="title-row"><div><h2>// ADMINISTRATORS</h2><small>ALL ADMINISTRATORS HAVE FULL CONTROL</small></div><button id="new-user">+ NEW USER</button></div>
+        <div class="title-row"><h2>// ADMINISTRATORS</h2><button id="new-user">+ NEW USER</button></div>
         <form id="user-form" class="form-grid editor" hidden>
           <input type="hidden" name="id" />
           <label>USERNAME<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="off" required /></label>

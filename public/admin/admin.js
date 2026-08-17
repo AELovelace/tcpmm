@@ -6,7 +6,7 @@ let submissionsLoading = false
 const $ = (selector) => document.querySelector(selector)
 const status = (message, error = false) => { const node = $('#status'); node.textContent = message; node.style.color = error ? '#ff7187' : '#ff2948' }
 const api = async (url, options = {}) => {
-  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers } })
+  const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers } })
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `Request failed: ${response.status}`) }
   return response.status === 204 ? null : response.json()
 }
@@ -21,7 +21,7 @@ const setAuthenticated = async (session) => {
 const loadContent = async () => { content = await api('/api/admin/content'); fillSettings(); renderSubmissions(); renderEvents(); renderNews(); renderUsers() }
 const fillSettings = () => Object.entries(content.settings).forEach(([key, value]) => { const field = $(`#settings-form [name="${key}"]`); if (field) field.value = value })
 const renderEvents = () => { $('#event-list').innerHTML = content.events.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${item.event_date} // ${escapeHtml(item.venue)}, ${escapeHtml(item.city)} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div><button data-edit-event="${item.id}">EDIT</button><button class="danger" data-delete-event="${item.id}">DELETE</button></div></article>`).join('') }
-const renderNews = () => { $('#news-list').innerHTML = content.news.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.label)} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div><button data-edit-news="${item.id}">EDIT</button><button class="danger" data-delete-news="${item.id}">DELETE</button></div></article>`).join('') }
+const renderNews = () => { $('#news-list').innerHTML = content.news.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.label)} · ${item.body_html ? 'STATIC ARTICLE' : 'LINK ONLY'} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div>${item.body_html && item.published ? `<a class="button-link" href="${escapeHtml(item.link)}" target="_blank">VIEW ↗</a>` : ''}<button data-edit-news="${item.id}">EDIT</button><button class="danger" data-delete-news="${item.id}">DELETE</button></div></article>`).join('') }
 const renderSubmissions = () => {
   const unread = content.submissions.filter((item) => !item.reviewed).length
   const reviewed = content.submissions.length - unread
@@ -46,7 +46,7 @@ const loadSubmissions = async (announce = false) => {
     renderSubmissions()
     const updated = $('#submission-updated')
     updated.textContent = `LAST CHECKED ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    if (announce) status('SUBMISSION INBOX REFRESHED')
+    if (announce) status('SUBMISSIONS REFRESHED')
   } catch (error) { if (announce) status(error.message, true) }
   finally { submissionsLoading = false }
 }
@@ -56,6 +56,13 @@ const openEditor = (type, item = null) => {
   const form = $(`#${type}-form`); form.reset(); form.hidden = false
   if (item) Object.entries(item).forEach(([key, value]) => { const field = form.elements.namedItem(key); if (!field) return; if (field.type === 'checkbox') field.checked = Boolean(value); else field.value = value })
   else { form.elements.namedItem('published').checked = true; form.elements.namedItem('id').value = '' }
+  if (type === 'news') {
+    $('#article-editor').innerHTML = item?.body_html || ''
+    $('#article-editor').classList.remove('preview-mode')
+    $('.wysiwyg-toolbar').hidden = false
+    $('#preview-news').textContent = 'PREVIEW'
+    form.elements.namedItem('slug').dataset.manual = item ? 'true' : 'false'
+  }
   form.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 const openUserEditor = (item = null) => {
@@ -74,10 +81,43 @@ const openSubmissionEditor = (item) => {
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const data = formObject(event.currentTarget); await setAuthenticated(await api('/api/admin/login', { method:'POST', body:JSON.stringify(data) })) } catch (error) { alert(error.message) } })
 $('#logout').addEventListener('click', async () => { await api('/api/admin/logout', { method:'POST' }); location.reload() })
 document.querySelectorAll('nav button').forEach((button) => button.addEventListener('click', () => { document.querySelectorAll('nav button').forEach((item) => item.classList.toggle('active', item === button)); document.querySelectorAll('.view').forEach((view) => { view.hidden = view.id !== `${button.dataset.view}-view` }) }))
-$('#settings-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/api/admin/settings', { method:'PUT', body:JSON.stringify(formObject(event.currentTarget)) }); status('SETTINGS WRITTEN'); await loadContent() } catch (error) { status(error.message, true) } })
+$('#settings-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/api/admin/settings', { method:'PUT', body:JSON.stringify(formObject(event.currentTarget)) }); status('SETTINGS SAVED'); await loadContent() } catch (error) { status(error.message, true) } })
 $('#new-event').addEventListener('click', () => openEditor('event'))
 $('#new-news').addEventListener('click', () => openEditor('news'))
 $('#new-user').addEventListener('click', () => openUserEditor())
+const newsTitle = $('#news-form [name="title"]')
+const newsSlug = $('#news-form [name="slug"]')
+const articleEditor = $('#article-editor')
+const slugify = (value) => String(value || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80)
+newsTitle.addEventListener('input', () => { if (newsSlug.dataset.manual !== 'true') newsSlug.value = slugify(newsTitle.value) })
+newsSlug.addEventListener('input', () => { newsSlug.dataset.manual = 'true'; newsSlug.value = slugify(newsSlug.value) })
+let editorRange = null
+document.addEventListener('selectionchange', () => {
+  const selection = window.getSelection()
+  if (selection?.rangeCount && articleEditor.contains(selection.anchorNode)) editorRange = selection.getRangeAt(0).cloneRange()
+})
+const restoreEditorSelection = () => {
+  articleEditor.focus()
+  if (!editorRange) return
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(editorRange)
+}
+document.querySelectorAll('[data-editor-command]').forEach((button) => button.addEventListener('mousedown', (event) => event.preventDefault()))
+document.querySelectorAll('[data-editor-command]').forEach((button) => button.addEventListener('click', () => {
+  restoreEditorSelection()
+  document.execCommand(button.dataset.editorCommand, false, button.dataset.editorValue || null)
+}))
+$('[data-editor-link]').addEventListener('mousedown', (event) => event.preventDefault())
+$('[data-editor-link]').addEventListener('click', () => {
+  const href = prompt('Link URL (https://, /local-path, #section, or mailto:)', 'https://')
+  if (!href || !/^(https?:\/\/|mailto:|\/|#)/i.test(href)) return
+  restoreEditorSelection()
+  document.execCommand('createLink', false, href)
+})
+$('#preview-news').addEventListener('click', () => {
+  const previewing = articleEditor.classList.toggle('preview-mode')
+  $('.wysiwyg-toolbar').hidden = previewing
+  $('#preview-news').textContent = previewing ? 'CONTINUE EDITING' : 'PREVIEW'
+})
 $('#refresh-submissions').addEventListener('click', () => loadSubmissions(true))
 document.querySelectorAll('[data-submission-filter]').forEach((button) => button.addEventListener('click', () => {
   submissionFilter = button.dataset.submissionFilter
@@ -85,14 +125,14 @@ document.querySelectorAll('[data-submission-filter]').forEach((button) => button
   renderSubmissions()
 }))
 document.querySelectorAll('.cancel').forEach((button) => button.addEventListener('click', () => { button.closest('form').hidden = true }))
-const saveRecord = async (event, type) => { event.preventDefault(); const form = event.currentTarget; const data = formObject(form); data.featured = form.elements.namedItem('featured').checked; data.published = form.elements.namedItem('published').checked; const id = data.id; delete data.id; try { await api(`/api/admin/${type}${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`${type.toUpperCase()} WRITTEN`); await loadContent() } catch (error) { status(error.message, true) } }
+const saveRecord = async (event, type) => { event.preventDefault(); const form = event.currentTarget; if (type === 'news') form.elements.namedItem('body_html').value = $('#article-editor').innerHTML; const data = formObject(form); data.featured = form.elements.namedItem('featured').checked; data.published = form.elements.namedItem('published').checked; const id = data.id; delete data.id; try { await api(`/api/admin/${type}${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`${type === 'news' ? 'STORY' : 'EVENT'} SAVED`); await loadContent() } catch (error) { status(error.message, true) } }
 $('#event-form').addEventListener('submit', (event) => saveRecord(event, 'events'))
 $('#news-form').addEventListener('submit', (event) => saveRecord(event, 'news'))
 $('#submission-editor').addEventListener('submit', async (event) => {
   event.preventDefault()
   const form = event.currentTarget; const data = formObject(form); const id = data.id; delete data.id
   data.reviewed = form.elements.namedItem('reviewed').checked
-  try { await api(`/api/admin/submissions/${id}`, { method:'PUT', body:JSON.stringify(data) }); form.hidden = true; status('SUBMISSION WRITTEN'); await loadSubmissions() }
+  try { await api(`/api/admin/submissions/${id}`, { method:'PUT', body:JSON.stringify(data) }); form.hidden = true; status('SUBMISSION SAVED'); await loadSubmissions() }
   catch (error) { status(error.message, true) }
 })
 $('#user-form').addEventListener('submit', async (event) => {
@@ -108,14 +148,14 @@ document.addEventListener('click', async (event) => {
   if (button.dataset.editUser) openUserEditor(content.admins.find((item) => item.id === Number(button.dataset.editUser)))
   if (button.dataset.editSubmission) openSubmissionEditor(content.submissions.find((item) => item.id === Number(button.dataset.editSubmission)))
   if (button.dataset.publishSubmission) {
-    try { await api(`/api/admin/submissions/${button.dataset.publishSubmission}/promote`, { method:'POST', body:'{}' }); status('SUBMISSION PUBLISHED AS A LIVE EVENT'); await loadContent() }
+    try { await api(`/api/admin/submissions/${button.dataset.publishSubmission}/promote`, { method:'POST', body:'{}' }); status('EVENT PUBLISHED'); await loadContent() }
     catch (error) { status(error.message, true) }
   }
   if (button.dataset.editEventFromSubmission) {
     document.querySelector('nav button[data-view="events"]').click()
     openEditor('event', content.events.find((item) => item.id === Number(button.dataset.editEventFromSubmission)))
   }
-  if (button.dataset.reviewSubmission) { try { await api(`/api/admin/submissions/${button.dataset.reviewSubmission}/reviewed`, { method:'PUT', body:JSON.stringify({ reviewed: button.dataset.reviewed !== 'true' }) }); status('SUBMISSION UPDATED'); await loadContent() } catch (error) { status(error.message, true) } }
+  if (button.dataset.reviewSubmission) { try { await api(`/api/admin/submissions/${button.dataset.reviewSubmission}/reviewed`, { method:'PUT', body:JSON.stringify({ reviewed: button.dataset.reviewed !== 'true' }) }); status('SUBMISSION SAVED'); await loadContent() } catch (error) { status(error.message, true) } }
   const type = button.dataset.deleteEvent ? 'events' : button.dataset.deleteNews ? 'news' : button.dataset.deleteUser ? 'users' : button.dataset.deleteSubmission ? 'submissions' : null
   const id = button.dataset.deleteEvent || button.dataset.deleteNews || button.dataset.deleteUser || button.dataset.deleteSubmission
   if (type && id && confirm('Permanently delete this record?')) { try { await api(`/api/admin/${type}/${id}`, { method:'DELETE' }); status('RECORD DELETED'); await loadContent() } catch (error) { status(error.message, true) } }

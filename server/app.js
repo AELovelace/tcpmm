@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
 import { config as loadEnv } from 'dotenv'
 import express from 'express'
+import sanitizeHtml from 'sanitize-html'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 loadEnv({ path: path.join(root, '.env'), quiet: true })
@@ -14,6 +15,7 @@ const dataDir = path.resolve(process.env.DATA_DIR || path.join(root, 'data'))
 const dbPath = path.join(dataDir, 'tcpmm.sqlite')
 const chatDbPath = path.resolve(process.env.CHAT_DB_PATH || path.join(dataDir, 'tcpmm-chat.sqlite'))
 const submissionsDbPath = path.resolve(process.env.SUBMISSIONS_DB_PATH || path.join(dataDir, 'tcpmm-submissions.sqlite'))
+const articleDir = path.join(dataDir, 'articles')
 if (chatDbPath.toLowerCase() === dbPath.toLowerCase()) throw new Error('CHAT_DB_PATH must be different from the site database path')
 if ([dbPath, chatDbPath].some((databasePath) => submissionsDbPath.toLowerCase() === databasePath.toLowerCase())) throw new Error('SUBMISSIONS_DB_PATH must be different from the site and chat database paths')
 const port = Number(process.env.PORT || 3000)
@@ -143,6 +145,7 @@ class IcyRadio {
 }
 
 fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+fs.mkdirSync(articleDir, { recursive: true, mode: 0o700 })
 fs.mkdirSync(path.dirname(chatDbPath), { recursive: true, mode: 0o700 })
 fs.mkdirSync(path.dirname(submissionsDbPath), { recursive: true, mode: 0o700 })
 const db = new Database(dbPath)
@@ -238,6 +241,8 @@ db.exec(`
     title TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     link TEXT NOT NULL DEFAULT '#',
+    slug TEXT NOT NULL DEFAULT '',
+    body_html TEXT NOT NULL DEFAULT '',
     featured INTEGER NOT NULL DEFAULT 0 CHECK (featured IN (0,1)),
     published INTEGER NOT NULL DEFAULT 1 CHECK (published IN (0,1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -249,6 +254,15 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `)
+
+const newsColumns = new Set(db.prepare('PRAGMA table_info(news)').all().map((column) => column.name))
+if (!newsColumns.has('slug')) db.exec("ALTER TABLE news ADD COLUMN slug TEXT NOT NULL DEFAULT ''")
+if (!newsColumns.has('body_html')) db.exec("ALTER TABLE news ADD COLUMN body_html TEXT NOT NULL DEFAULT ''")
+const slugify = (value) => String(value || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80)
+const rowsMissingSlugs = db.prepare("SELECT id, title FROM news WHERE slug = '' ORDER BY id").all()
+const setInitialSlug = db.prepare('UPDATE news SET slug = ? WHERE id = ?')
+for (const row of rowsMissingSlugs) setInitialSlug.run(`${slugify(row.title) || 'story'}-${row.id}`, row.id)
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS news_slug_unique ON news(slug)')
 
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'show_submissions'").get()) {
   const legacySubmissions = db.prepare('SELECT id, event_date, venue, address, lineup, description, reviewed, created_at FROM show_submissions ORDER BY id').all()
@@ -283,23 +297,68 @@ const seed = db.transaction(() => {
     insert.run('2026-09-13', 'FREAK FREQUENCIES', 'Uptown Room', 'Richland', 'Ghost Bloom / Static TV / DJ Rat King', 'other', '$12', '8 PM', 0)
   }
   if (db.prepare('SELECT COUNT(*) AS count FROM news').get().count === 0) {
-    const insert = db.prepare('INSERT INTO news (label, title, summary, link, featured) VALUES (?, ?, ?, ?, ?)')
-    insert.run('SCENE REPORT', "DIY IS NOT A GENRE. IT'S HOW WE SURVIVE.", 'A starter guide to booking a room, making a bill, and keeping the door open for the next band.', '#submit', 1)
-    insert.run('CALL FOR SUBMISSIONS', 'Send us your flyers, demos, photos, and dispatches.', '', '#submit', 0)
-    insert.run('VENUE WATCH', 'Four rooms keeping original music on the calendar.', '', '#shows', 0)
-    insert.run('NEW RELEASE', 'Three local records for your next late-night drive.', '', '#radio', 0)
+    const insert = db.prepare('INSERT INTO news (label, title, summary, link, slug, featured) VALUES (?, ?, ?, ?, ?, ?)')
+    insert.run('SCENE REPORT', "DIY IS NOT A GENRE. IT'S HOW WE SURVIVE.", 'A starter guide to booking a room, making a bill, and keeping the door open for the next band.', '#submit', 'diy-is-not-a-genre', 1)
+    insert.run('CALL FOR SUBMISSIONS', 'Send us your flyers, demos, photos, and dispatches.', '', '#submit', 'call-for-submissions', 0)
+    insert.run('VENUE WATCH', 'Four rooms keeping original music on the calendar.', '', '#shows', 'venue-watch', 0)
+    insert.run('NEW RELEASE', 'Three local records for your next late-night drive.', '', '#radio', 'new-release', 0)
   }
   const defaults = {
     hero_title: 'MAKE|YOUR OWN|NOISE.',
     hero_text: "Your independent wire for loud rooms, weird sounds, DIY culture, and everything happening after dark in Washington's Tri-Cities.",
     radio_status: 'OFFLINE',
     radio_title: 'NO SIGNAL',
-    radio_message: 'Radio system reserved for phase two.'
+    radio_message: ''
   }
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   Object.entries(defaults).forEach(([key, value]) => insertSetting.run(key, value))
+  db.prepare("UPDATE settings SET value = '' WHERE key = 'radio_message' AND value = 'Radio system reserved for phase two.'").run()
 })
 seed()
+
+const escapeMarkup = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
+const sanitizeArticleHtml = (value) => sanitizeHtml(String(value || '').slice(0, 60_000), {
+  allowedTags: ['p', 'br', 'h2', 'h3', 'h4', 'strong', 'em', 'u', 's', 'blockquote', 'ul', 'ol', 'li', 'a', 'hr'],
+  allowedAttributes: { a: ['href', 'title', 'target', 'rel'] },
+  allowedSchemes: ['http', 'https', 'mailto'],
+  transformTags: {
+    a: (_tagName, attributes) => ({ tagName: 'a', attribs: {
+      ...attributes,
+      ...(attributes.target === '_blank' ? { rel: 'noopener noreferrer' } : {})
+    } })
+  }
+})
+const articlePath = (slug) => path.join(articleDir, `${slug}.html`)
+const removeArticlePage = (slug) => { if (slug && /^[a-z0-9-]+$/.test(slug)) fs.rmSync(articlePath(slug), { force: true }) }
+const writeArticlePage = (article) => {
+  removeArticlePage(article.slug)
+  if (!article.published || !article.body_html) return
+  const page = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="${escapeMarkup(article.summary)}" />
+  <meta name="theme-color" content="#050607" />
+  <title>${escapeMarkup(article.title)} // TCPM&amp;M</title>
+  <link rel="stylesheet" href="/article.css" />
+</head>
+<body>
+  <a class="skip-link" href="#article">Skip to article</a>
+  <header class="masthead"><a href="/">TCPM&amp;M <span>// TRANSMISSIONS</span></a><a href="/#news">BACK TO NEWS ↙</a></header>
+  <main id="article" class="article-shell">
+    <header class="article-header"><span class="label">${escapeMarkup(article.label)}</span><h1>${escapeMarkup(article.title)}</h1>${article.summary ? `<p>${escapeMarkup(article.summary)}</p>` : ''}<div class="rule"><i></i><span>TRI-CITIES, WA · ${escapeMarkup(article.updated_at.slice(0, 10))}</span></div></header>
+    <article class="article-body">${article.body_html}</article>
+    <footer><a href="/#news">← MORE TRANSMISSIONS</a><strong>509 UNDERGROUND</strong></footer>
+  </main>
+</body>
+</html>`
+  const temporary = `${articlePath(article.slug)}.tmp`
+  fs.writeFileSync(temporary, page, { encoding: 'utf8', mode: 0o600 })
+  fs.renameSync(temporary, articlePath(article.slug))
+}
+for (const file of fs.readdirSync(articleDir)) if (file.endsWith('.html') || file.endsWith('.tmp')) fs.rmSync(path.join(articleDir, file), { force: true })
+for (const article of db.prepare("SELECT * FROM news WHERE published = 1 AND body_html <> ''").all()) writeArticlePage(article)
 
 db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now())
 
@@ -308,7 +367,7 @@ const radio = new IcyRadio(musicDir)
 radio.start()
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1)
 app.disable('x-powered-by')
-app.use(express.json({ limit: '64kb' }))
+app.use(express.json({ limit: '96kb' }))
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'same-origin')
@@ -447,7 +506,7 @@ const eventFields = (body) => {
 
 app.get('/api/content', (_req, res) => {
   const events = db.prepare('SELECT * FROM events WHERE published = 1 ORDER BY event_date, id').all()
-  const news = db.prepare('SELECT * FROM news WHERE published = 1 ORDER BY featured DESC, id').all()
+  const news = db.prepare('SELECT id, label, title, summary, link, featured FROM news WHERE published = 1 ORDER BY featured DESC, id').all()
   const settings = Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value]))
   res.set({
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -629,19 +688,48 @@ app.delete('/api/admin/events/:id', requireAuth, requireCsrf, (req, res) => {
 })
 
 const newsFields = (body) => {
-  const item = { label: String(body.label || '').trim(), title: String(body.title || '').trim(), summary: String(body.summary || '').trim(), link: String(body.link || '#').trim(), featured: body.featured ? 1 : 0, published: body.published === false ? 0 : 1 }
-  if (!item.label || !item.title || (!item.link.startsWith('#') && !/^\/(?!\/)/.test(item.link))) throw new Error('News requires a label, title, and local link')
+  const item = {
+    label: String(body.label || '').trim().slice(0, 80),
+    title: String(body.title || '').trim().slice(0, 200),
+    summary: String(body.summary || '').trim().slice(0, 1000),
+    slug: slugify(body.slug || body.title),
+    body_html: sanitizeArticleHtml(body.body_html),
+    featured: body.featured ? 1 : 0,
+    published: body.published === false ? 0 : 1
+  }
+  if (!item.label || !item.title || !item.slug) throw new Error('News requires a label, title, and page slug')
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.slug)) throw new Error('Page slug may only contain lowercase letters, numbers, and dashes')
+  item.link = item.body_html ? `/news/${item.slug}` : String(body.link || '#news').trim()
+  if (!item.body_html && !item.link.startsWith('#') && !/^\/(?!\/)/.test(item.link)) throw new Error('A story without article content requires a local link')
   return item
 }
 app.post('/api/admin/news', requireAuth, requireCsrf, (req, res) => {
-  try { const item = newsFields(req.body); const result = db.prepare('INSERT INTO news (label,title,summary,link,featured,published) VALUES (@label,@title,@summary,@link,@featured,@published)').run(item); res.status(201).json({ id: result.lastInsertRowid }) }
-  catch (error) { res.status(400).json({ error: error.message }) }
+  try {
+    const item = newsFields(req.body)
+    const result = db.prepare('INSERT INTO news (label,title,summary,link,slug,body_html,featured,published) VALUES (@label,@title,@summary,@link,@slug,@body_html,@featured,@published)').run(item)
+    const article = db.prepare('SELECT * FROM news WHERE id = ?').get(result.lastInsertRowid)
+    writeArticlePage(article)
+    res.status(201).json({ id: result.lastInsertRowid, link: article.link })
+  } catch (error) { res.status(error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 409 : 400).json({ error: error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'That page slug is already in use' : error.message }) }
 })
 app.put('/api/admin/news/:id', requireAuth, requireCsrf, (req, res) => {
-  try { const item = { ...newsFields(req.body), id: Number(req.params.id) }; const result = db.prepare('UPDATE news SET label=@label,title=@title,summary=@summary,link=@link,featured=@featured,published=@published,updated_at=CURRENT_TIMESTAMP WHERE id=@id').run(item); if (!result.changes) return res.status(404).json({ error: 'Story not found' }); res.status(204).end() }
-  catch (error) { res.status(400).json({ error: error.message }) }
+  try {
+    const id = Number(req.params.id)
+    const previous = db.prepare('SELECT slug FROM news WHERE id = ?').get(id)
+    if (!previous) return res.status(404).json({ error: 'Story not found' })
+    const item = { ...newsFields(req.body), id }
+    db.prepare('UPDATE news SET label=@label,title=@title,summary=@summary,link=@link,slug=@slug,body_html=@body_html,featured=@featured,published=@published,updated_at=CURRENT_TIMESTAMP WHERE id=@id').run(item)
+    if (previous.slug !== item.slug) removeArticlePage(previous.slug)
+    writeArticlePage(db.prepare('SELECT * FROM news WHERE id = ?').get(id))
+    res.status(204).end()
+  } catch (error) { res.status(error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 409 : 400).json({ error: error.code === 'SQLITE_CONSTRAINT_UNIQUE' ? 'That page slug is already in use' : error.message }) }
 })
-app.delete('/api/admin/news/:id', requireAuth, requireCsrf, (req, res) => { db.prepare('DELETE FROM news WHERE id = ?').run(Number(req.params.id)); res.status(204).end() })
+app.delete('/api/admin/news/:id', requireAuth, requireCsrf, (req, res) => {
+  const article = db.prepare('SELECT slug FROM news WHERE id = ?').get(Number(req.params.id))
+  if (article) removeArticlePage(article.slug)
+  db.prepare('DELETE FROM news WHERE id = ?').run(Number(req.params.id))
+  res.status(204).end()
+})
 
 app.put('/api/admin/submissions/:id/reviewed', requireAuth, requireCsrf, (req, res) => {
   const id = Number(req.params.id)
@@ -699,6 +787,13 @@ const sendUncachedFile = (res, file) => res.sendFile(file, { headers: {
   Pragma: 'no-cache',
   Expires: '0'
 } })
+app.get('/news/:slug', (req, res, next) => {
+  const slug = String(req.params.slug || '')
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return next()
+  const file = articlePath(slug)
+  if (!fs.existsSync(file)) return res.status(404).send('Article not found')
+  sendUncachedFile(res, file)
+})
 app.get(['/admin', '/admin/'], (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'admin', 'index.html')))
 app.get(['/submit', '/submit/'], (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'submit', 'index.html')))
 app.get('/{*path}', (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'index.html')))
