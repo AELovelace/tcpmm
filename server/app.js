@@ -18,7 +18,7 @@ const submissionsDbPath = path.resolve(process.env.SUBMISSIONS_DB_PATH || path.j
 const articleDir = path.join(dataDir, 'articles')
 if (chatDbPath.toLowerCase() === dbPath.toLowerCase()) throw new Error('CHAT_DB_PATH must be different from the site database path')
 if ([dbPath, chatDbPath].some((databasePath) => submissionsDbPath.toLowerCase() === databasePath.toLowerCase())) throw new Error('SUBMISSIONS_DB_PATH must be different from the site and chat database paths')
-const port = Number(process.env.PORT || 3000)
+const port = Number(process.env.PORT || 3030)
 const host = process.env.HOST || '127.0.0.1'
 const production = process.env.NODE_ENV === 'production'
 const musicDir = path.resolve(process.env.MUSIC_DIR || path.join(root, 'music'))
