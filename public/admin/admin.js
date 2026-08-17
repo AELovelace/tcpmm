@@ -32,9 +32,9 @@ const renderSubmissions = () => {
   document.title = unread ? `(${unread}) TCPM&M // CONTROL` : 'TCPM&M // CONTROL'
   const visible = content.submissions.filter((item) => submissionFilter === 'all' || (submissionFilter === 'reviewed') === Boolean(item.reviewed))
   $('#submission-list').innerHTML = visible.length ? visible.map((item) => `<article class="submission-record${item.reviewed ? ' reviewed' : ''}">
-    <div class="submission-head"><div><strong>${escapeHtml(item.venue)}</strong><span>${escapeHtml(item.event_date)} · RECEIVED ${escapeHtml(item.created_at)}</span></div>${item.reviewed ? '<b class="draft">[REVIEWED]</b>' : '<b class="current">[NEW]</b>'}</div>
-    <dl><dt>CONTACT</dt><dd>${escapeHtml(item.contact || 'Not provided')}</dd><dt>ADDRESS</dt><dd>${escapeHtml(item.address)}</dd><dt>LINEUP</dt><dd>${escapeHtml(item.lineup)}</dd><dt>DESCRIPTION</dt><dd>${escapeHtml(item.description)}</dd></dl>
-    <div class="actions"><button data-promote-submission="${item.id}">CREATE EVENT</button><button data-edit-submission="${item.id}">EDIT</button><button data-review-submission="${item.id}" data-reviewed="${item.reviewed ? 'true' : 'false'}">${item.reviewed ? 'MARK NEW' : 'MARK REVIEWED'}</button><button class="danger" data-delete-submission="${item.id}">DELETE</button></div>
+    <div class="submission-head"><div><strong>${escapeHtml(item.title || item.venue)}</strong><span>${escapeHtml(item.event_date)} · ${escapeHtml(item.venue)}, ${escapeHtml(item.city || 'CITY NEEDED')} · RECEIVED ${escapeHtml(item.created_at)}</span></div>${item.published_event_id ? '<b class="current">[PUBLISHED]</b>' : item.reviewed ? '<b class="draft">[REVIEWED]</b>' : '<b class="current">[NEW]</b>'}</div>
+    <dl><dt>GENRE</dt><dd>${escapeHtml(item.genre || 'other')}</dd><dt>PRICE / DOORS</dt><dd>${escapeHtml(item.price || '—')} / ${escapeHtml(item.doors || '—')}</dd><dt>CONTACT</dt><dd>${escapeHtml(item.contact || 'Not provided')}</dd><dt>ADDRESS</dt><dd>${escapeHtml(item.address)}</dd><dt>LINEUP</dt><dd>${escapeHtml(item.lineup)}</dd><dt>DESCRIPTION</dt><dd>${escapeHtml(item.description)}</dd></dl>
+    <div class="actions">${item.published_event_id ? `<button data-edit-event-from-submission="${item.published_event_id}">EDIT PUBLISHED EVENT</button>` : `<button data-publish-submission="${item.id}"${!item.title || !item.city ? ' disabled title="Add the missing title and city first"' : ''}>PUBLISH EVENT</button>`}<button data-edit-submission="${item.id}">EDIT</button><button data-review-submission="${item.id}" data-reviewed="${item.reviewed ? 'true' : 'false'}">${item.reviewed ? 'MARK NEW' : 'MARK REVIEWED'}</button><button class="danger" data-delete-submission="${item.id}">DELETE</button></div>
   </article>`).join('') : `<p class="empty">NO ${submissionFilter === 'all' ? '' : `${submissionFilter.toUpperCase()} `}SHOW SUBMISSIONS.</p>`
 }
 const loadSubmissions = async (announce = false) => {
@@ -70,17 +70,6 @@ const openSubmissionEditor = (item) => {
   const form = $('#submission-editor'); form.reset(); form.hidden = false
   Object.entries(item).forEach(([key, value]) => { const field = form.elements.namedItem(key); if (!field) return; if (field.type === 'checkbox') field.checked = Boolean(value); else field.value = value })
   form.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-const promoteSubmission = (item) => {
-  document.querySelector('nav button[data-view="events"]').click()
-  openEditor('event')
-  const form = $('#event-form')
-  form.elements.namedItem('source_submission_id').value = item.id
-  form.elements.namedItem('event_date').value = item.event_date
-  form.elements.namedItem('venue').value = item.venue
-  form.elements.namedItem('lineup').value = item.lineup.slice(0, 300)
-  form.elements.namedItem('published').checked = false
-  status('COMPLETE EVENT DETAILS // SOURCE SUBMISSION WILL BE MARKED REVIEWED')
 }
 $('#login-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const data = formObject(event.currentTarget); await setAuthenticated(await api('/api/admin/login', { method:'POST', body:JSON.stringify(data) })) } catch (error) { alert(error.message) } })
 $('#logout').addEventListener('click', async () => { await api('/api/admin/logout', { method:'POST' }); location.reload() })
@@ -118,7 +107,14 @@ document.addEventListener('click', async (event) => {
   if (button.dataset.editNews) openEditor('news', content.news.find((item) => item.id === Number(button.dataset.editNews)))
   if (button.dataset.editUser) openUserEditor(content.admins.find((item) => item.id === Number(button.dataset.editUser)))
   if (button.dataset.editSubmission) openSubmissionEditor(content.submissions.find((item) => item.id === Number(button.dataset.editSubmission)))
-  if (button.dataset.promoteSubmission) promoteSubmission(content.submissions.find((item) => item.id === Number(button.dataset.promoteSubmission)))
+  if (button.dataset.publishSubmission) {
+    try { await api(`/api/admin/submissions/${button.dataset.publishSubmission}/promote`, { method:'POST', body:'{}' }); status('SUBMISSION PUBLISHED AS A LIVE EVENT'); await loadContent() }
+    catch (error) { status(error.message, true) }
+  }
+  if (button.dataset.editEventFromSubmission) {
+    document.querySelector('nav button[data-view="events"]').click()
+    openEditor('event', content.events.find((item) => item.id === Number(button.dataset.editEventFromSubmission)))
+  }
   if (button.dataset.reviewSubmission) { try { await api(`/api/admin/submissions/${button.dataset.reviewSubmission}/reviewed`, { method:'PUT', body:JSON.stringify({ reviewed: button.dataset.reviewed !== 'true' }) }); status('SUBMISSION UPDATED'); await loadContent() } catch (error) { status(error.message, true) } }
   const type = button.dataset.deleteEvent ? 'events' : button.dataset.deleteNews ? 'news' : button.dataset.deleteUser ? 'users' : button.dataset.deleteSubmission ? 'submissions' : null
   const id = button.dataset.deleteEvent || button.dataset.deleteNews || button.dataset.deleteUser || button.dataset.deleteSubmission

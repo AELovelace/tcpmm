@@ -40,7 +40,7 @@ The application VM owns Node, SQLite, and all site files. The separate Nginx VM 
 
 ## Content and data
 
-Initial listings are seeded into SQLite and can be changed in `/admin`. Events, news, hero copy, and radio status use `tcpmm.sqlite`. The dedicated `/submit/` page collects show details and contact information using a short-lived, one-time form token. New submissions are isolated in `tcpmm-submissions.sqlite` and appear in the admin **MAIL** inbox with new/reviewed filters, counts, automatic refresh, review controls, and deletion; no email service is required. The public multi-user chat stores messages in the separate `tcpmm-chat.sqlite` database. Display names are remembered only in each visitor's browser.
+Initial listings are seeded into SQLite and can be changed in `/admin`. Events, news, hero copy, and radio status use `tcpmm.sqlite`. The dedicated `/submit/` page collects the same calendar fields as an event plus venue address, description, and contact information using a short-lived, one-time form token. New submissions are isolated in `tcpmm-submissions.sqlite` and appear in the admin **MAIL** inbox. An administrator can publish a complete submission to the live event calendar in one step, then edit the resulting event normally. The public multi-user chat stores messages in the separate `tcpmm-chat.sqlite` database.
 
 ## Radio
 

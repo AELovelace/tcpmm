@@ -463,7 +463,7 @@ const submissionFields = (body) => {
     venue: submissionText(body?.venue, 100),
     city: submissionText(body?.city, 60),
     address: submissionText(body?.address, 200),
-    lineup: submissionText(body?.lineup, 500),
+    lineup: submissionText(body?.lineup, 300),
     genre: submissionText(body?.genre, 20),
     price: submissionText(body?.price, 30),
     doors: submissionText(body?.doors, 30),
