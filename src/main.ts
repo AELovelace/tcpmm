@@ -232,7 +232,7 @@ const applySettings = (settings: SiteSettings) => {
 
 const loadManagedContent = async () => {
   try {
-    const response = await fetch('/api/content')
+    const response = await fetch('/api/content', { cache: 'no-store' })
     if (!response.ok) return
     const data = await response.json() as { events: ContentEvent[]; news: NewsItem[]; settings: SiteSettings }
     events = data.events

@@ -449,7 +449,11 @@ app.get('/api/content', (_req, res) => {
   const events = db.prepare('SELECT * FROM events WHERE published = 1 ORDER BY event_date, id').all()
   const news = db.prepare('SELECT * FROM news WHERE published = 1 ORDER BY featured DESC, id').all()
   const settings = Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value]))
-  res.setHeader('Cache-Control', 'public, max-age=30')
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0'
+  })
   res.json({ events, news, settings })
 })
 
@@ -690,9 +694,14 @@ app.put('/api/admin/settings', requireAuth, requireCsrf, (req, res) => {
 })
 
 app.use(express.static(path.join(root, 'dist'), { index: false, maxAge: production ? '1h' : 0 }))
-app.get('/admin', (_req, res) => res.sendFile(path.join(root, 'dist', 'admin', 'index.html')))
-app.get(['/submit', '/submit/'], (_req, res) => res.sendFile(path.join(root, 'dist', 'submit', 'index.html')))
-app.get('/{*path}', (_req, res) => res.sendFile(path.join(root, 'dist', 'index.html')))
+const sendUncachedFile = (res, file) => res.sendFile(file, { headers: {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0'
+} })
+app.get(['/admin', '/admin/'], (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'admin', 'index.html')))
+app.get(['/submit', '/submit/'], (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'submit', 'index.html')))
+app.get('/{*path}', (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'index.html')))
 
 app.use((error, _req, res, _next) => {
   console.error(error)
