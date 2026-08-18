@@ -7,6 +7,7 @@
   <title>TCPM&M // CONTROL</title>
   <link rel="stylesheet" href="/admin/admin.css" />
   <link rel="stylesheet" href="/admin/editor.css" />
+  <link rel="stylesheet" href="/admin/venues.css" />
 </head>
 <body>
   <main class="shell">
@@ -20,7 +21,7 @@
       </form>
     </section>
     <section id="control-view" hidden>
-      <nav><button data-view="settings" class="active">SITE</button><button data-view="submissions">MAIL <b id="submission-count"></b></button><button data-view="events">EVENTS</button><button data-view="news">NEWS</button><button data-view="users">USERS</button><a href="/" target="_blank">VIEW SITE ↗</a></nav>
+      <nav><button data-view="settings" class="active">SITE</button><button data-view="submissions">MAIL <b id="submission-count"></b></button><button data-view="events">EVENTS</button><button data-view="venues">VENUES</button><button data-view="news">NEWS</button><button data-view="users">USERS</button><a href="/" target="_blank">VIEW SITE ↗</a></nav>
       <p id="status" role="status"></p>
       <section id="settings-view" class="panel view">
         <h2>// SITE + RADIO</h2>
@@ -108,6 +109,28 @@
           <div class="actions wide"><button>SAVE STORY</button><button type="button" id="preview-news" class="secondary">PREVIEW</button><button type="button" class="secondary cancel">CANCEL</button></div>
         </form>
         <div id="news-list" class="records"></div>
+      </section>
+      <section id="venues-view" class="panel view" hidden>
+        <div class="title-row"><h2>// VENUE DIRECTORY</h2><button id="new-venue">+ NEW VENUE</button></div>
+        <form id="venue-form" class="form-grid editor" hidden>
+          <input type="hidden" name="id" />
+          <label>NAME<input name="name" maxlength="120" required /></label>
+          <label>CITY<input name="city" maxlength="80" required /></label>
+          <label class="wide">STREET ADDRESS<input name="address" maxlength="200" required /></label>
+          <label>PHONE<input name="phone" type="tel" maxlength="40" /></label>
+          <label>WEBSITE<input name="website" type="url" maxlength="300" placeholder="https://" /></label>
+          <label class="wide">DESCRIPTION<textarea name="description" rows="5" maxlength="2000"></textarea></label>
+          <div class="wide venue-image-field">
+            <span>VENUE PHOTO · JPEG, PNG, OR WEBP · 5 MB MAX</span>
+            <div class="venue-image-preview"><img id="venue-image-preview" alt="Current venue image preview" hidden /><p id="venue-image-empty">NO IMAGE UPLOADED</p></div>
+            <input id="venue-image" name="image" type="file" accept="image/jpeg,image/png,image/webp" />
+            <button id="remove-venue-image" type="button" class="secondary" hidden>REMOVE CURRENT IMAGE</button>
+          </div>
+          <label class="check"><input name="featured" type="checkbox" /> FEATURED</label>
+          <label class="check"><input name="published" type="checkbox" checked /> PUBLISHED</label>
+          <div class="actions wide"><button>SAVE VENUE</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <div id="venue-list" class="records"></div>
       </section>
       <section id="users-view" class="panel view" hidden>
         <div class="title-row"><h2>// ADMINISTRATORS</h2><button id="new-user">+ NEW USER</button></div>

@@ -16,6 +16,7 @@ type ContentEvent = {
 }
 
 type NewsItem = { id: number; label: string; title: string; summary: string; link: string; featured: number }
+type Venue = { id: number; name: string; address: string; city: string; phone: string; website: string; description: string; image_path: string; featured: number }
 type SiteSettings = Record<string, string>
 
 type ChatMessage = {
@@ -32,6 +33,7 @@ let events: ContentEvent[] = [
   { id: 3, event_date: '2026-09-05', title: 'NO BARRIERS', venue: 'DIY Space', city: 'Richland', lineup: 'Exit Wound / Cold Comfort / Loose Ends', genre: 'hardcore', price: '$8', doors: '7 PM', featured: 0 },
   { id: 4, event_date: '2026-09-13', title: 'FREAK FREQUENCIES', venue: 'Uptown Room', city: 'Richland', lineup: 'Ghost Bloom / Static TV / DJ Rat King', genre: 'other', price: '$12', doors: '8 PM', featured: 0 },
 ]
+let venues: Venue[] = []
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character] ?? character)
 
@@ -128,10 +130,18 @@ app.innerHTML = `
           </article>
           <div class="news-stack">
             <article><span>CALL FOR SUBMISSIONS · AUG 16</span><h3>Send us your flyers, demos, photos, and dispatches.</h3><a href="/submit/" aria-label="Submit a show">↗</a></article>
-            <article id="venues"><span>VENUE WATCH · AUG 11</span><h3>Four rooms keeping original music on the calendar.</h3><a href="#shows" aria-label="Read venue watch">↗</a></article>
+            <article><span>VENUE WATCH · AUG 11</span><h3>Four rooms keeping original music on the calendar.</h3><a href="#venues" aria-label="Open the venue directory">↗</a></article>
             <article><span>NEW RELEASE · AUG 03</span><h3>Three local records for your next late-night drive.</h3><a href="#radio" aria-label="Read local record roundup">↗</a></article>
           </div>
         </div>
+      </section>
+
+      <section class="venues-section" id="venues" aria-labelledby="venues-title">
+        <div class="heading-row">
+          <div><span class="section-index">03 / DIRECTORY</span><h2 id="venues-title">// LOUD ROOMS</h2></div>
+          <p>LOCAL STAGES.<br />INDEPENDENT SPACES.</p>
+        </div>
+        <div class="venue-grid" id="venue-grid"><p class="venue-empty">VENUE DIRECTORY COMING ONLINE.</p></div>
       </section>
 
       <section class="submit-strip" id="submit" aria-labelledby="submit-title">
@@ -210,6 +220,19 @@ const renderNews = (items: NewsItem[]) => {
     <div class="news-stack">${secondary.map((item) => `<article><span>${escapeHtml(item.label)}</span><h3>${escapeHtml(item.title)}</h3><a href="${escapeHtml(item.link)}" aria-label="Read ${escapeHtml(item.title)}">↗</a></article>`).join('')}</div>`
 }
 
+const renderVenues = () => {
+  const grid = document.querySelector<HTMLDivElement>('#venue-grid')
+  if (!grid) return
+  if (!venues.length) { grid.innerHTML = '<p class="venue-empty">VENUE DIRECTORY COMING ONLINE.</p>'; return }
+  grid.innerHTML = venues.map((venue) => {
+    const phoneLink = venue.phone.replace(/[^+\d]/g, '')
+    return `<article class="venue-card${venue.featured ? ' featured' : ''}">
+      <div class="venue-photo">${venue.image_path ? `<img src="${escapeHtml(venue.image_path)}" alt="Photo of ${escapeHtml(venue.name)}" loading="lazy" />` : '<span aria-hidden="true">NO<br />IMAGE</span>'}${venue.featured ? '<b>FEATURED ROOM</b>' : ''}</div>
+      <div class="venue-copy"><span class="venue-city">${escapeHtml(venue.city)} // WA</span><h3>${escapeHtml(venue.name)}</h3><address>${escapeHtml(venue.address)}<br />${escapeHtml(venue.city)}, WA</address>${venue.description ? `<p>${escapeHtml(venue.description)}</p>` : ''}<div class="venue-links">${venue.website ? `<a href="${escapeHtml(venue.website)}" target="_blank" rel="noopener noreferrer">WEBSITE ↗</a>` : ''}${venue.phone && phoneLink ? `<a href="tel:${escapeHtml(phoneLink)}">${escapeHtml(venue.phone)}</a>` : ''}</div></div>
+    </article>`
+  }).join('')
+}
+
 const renderBoard = () => {
   const featured = events.find((event) => event.featured) ?? events[0]
   const featureNode = document.querySelector<HTMLElement>('#board-feature')
@@ -234,12 +257,14 @@ const loadManagedContent = async () => {
   try {
     const response = await fetch('/api/content', { cache: 'no-store' })
     if (!response.ok) return
-    const data = await response.json() as { events: ContentEvent[]; news: NewsItem[]; settings: SiteSettings }
+    const data = await response.json() as { events: ContentEvent[]; news: NewsItem[]; venues: Venue[]; settings: SiteSettings }
     events = data.events
-    renderEvents('all'); renderBoard(); renderNews(data.news); applySettings(data.settings)
+    venues = data.venues ?? []
+    renderEvents('all'); renderBoard(); renderNews(data.news); renderVenues(); applySettings(data.settings)
   } catch { /* Static Vite development keeps the bundled fallback content. */ }
 }
 renderBoard()
+renderVenues()
 void loadManagedContent()
 
 const radioAudio = new Audio('/radio/stream')

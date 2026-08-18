@@ -1,0 +1,12 @@
+.venue-image-field { display: grid; gap: .6rem; color: #979ca1; font-size: .7rem; }
+.venue-image-preview { display: grid; place-items: center; min-height: 180px; border: 1px dashed #4b4f54; background: #050607; overflow: hidden; }
+.venue-image-preview img { display: block; width: 100%; max-height: 360px; object-fit: cover; }
+.venue-image-preview p { color: #555b61; }
+.venue-image-field > button { justify-self: start; }
+.venue-record { display: grid; grid-template-columns: 70px 1fr auto; }
+.venue-record > img, .venue-record-placeholder { width: 70px; height: 52px; margin: 0; object-fit: cover; }
+.venue-record-placeholder { display: grid !important; place-items: center; border: 1px solid #34373c; color: #555 !important; font-size: .55rem !important; }
+@media (max-width: 650px) {
+  .venue-record { grid-template-columns: 70px 1fr; }
+  .venue-record > div:last-child { grid-column: 1 / -1; }
+}

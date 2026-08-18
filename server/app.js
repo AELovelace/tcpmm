@@ -16,6 +16,7 @@ const dbPath = path.join(dataDir, 'tcpmm.sqlite')
 const chatDbPath = path.resolve(process.env.CHAT_DB_PATH || path.join(dataDir, 'tcpmm-chat.sqlite'))
 const submissionsDbPath = path.resolve(process.env.SUBMISSIONS_DB_PATH || path.join(dataDir, 'tcpmm-submissions.sqlite'))
 const articleDir = path.join(dataDir, 'articles')
+const venueImageDir = path.join(dataDir, 'venue-images')
 if (chatDbPath.toLowerCase() === dbPath.toLowerCase()) throw new Error('CHAT_DB_PATH must be different from the site database path')
 if ([dbPath, chatDbPath].some((databasePath) => submissionsDbPath.toLowerCase() === databasePath.toLowerCase())) throw new Error('SUBMISSIONS_DB_PATH must be different from the site and chat database paths')
 const port = Number(process.env.PORT || 3030)
@@ -146,6 +147,7 @@ class IcyRadio {
 
 fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 fs.mkdirSync(articleDir, { recursive: true, mode: 0o700 })
+fs.mkdirSync(venueImageDir, { recursive: true, mode: 0o700 })
 fs.mkdirSync(path.dirname(chatDbPath), { recursive: true, mode: 0o700 })
 fs.mkdirSync(path.dirname(submissionsDbPath), { recursive: true, mode: 0o700 })
 const db = new Database(dbPath)
@@ -243,6 +245,20 @@ db.exec(`
     link TEXT NOT NULL DEFAULT '#',
     slug TEXT NOT NULL DEFAULT '',
     body_html TEXT NOT NULL DEFAULT '',
+    featured INTEGER NOT NULL DEFAULT 0 CHECK (featured IN (0,1)),
+    published INTEGER NOT NULL DEFAULT 1 CHECK (published IN (0,1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS venues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    city TEXT NOT NULL,
+    phone TEXT NOT NULL DEFAULT '',
+    website TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    image_path TEXT NOT NULL DEFAULT '',
     featured INTEGER NOT NULL DEFAULT 0 CHECK (featured IN (0,1)),
     published INTEGER NOT NULL DEFAULT 1 CHECK (published IN (0,1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -504,16 +520,35 @@ const eventFields = (body) => {
   return item
 }
 
+const venueText = (value, maximum) => String(value || '').normalize('NFKC').replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, maximum)
+const venueFields = (body) => {
+  const item = {
+    name: venueText(body?.name, 120), address: venueText(body?.address, 200), city: venueText(body?.city, 80),
+    phone: venueText(body?.phone, 40), website: venueText(body?.website, 300), description: venueText(body?.description, 2000),
+    featured: body?.featured ? 1 : 0, published: body?.published === false ? 0 : 1
+  }
+  if (!item.name || !item.address || !item.city) throw new Error('Venue name, address, and city are required')
+  if (item.website) {
+    try {
+      const url = new URL(item.website)
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error()
+      item.website = url.toString()
+    } catch { throw new Error('Venue website must be a complete http:// or https:// URL') }
+  }
+  return item
+}
+
 app.get('/api/content', (_req, res) => {
   const events = db.prepare('SELECT * FROM events WHERE published = 1 ORDER BY event_date, id').all()
   const news = db.prepare('SELECT id, label, title, summary, link, featured FROM news WHERE published = 1 ORDER BY featured DESC, id').all()
+  const venues = db.prepare('SELECT id, name, address, city, phone, website, description, image_path, featured FROM venues WHERE published = 1 ORDER BY featured DESC, name COLLATE NOCASE, id').all()
   const settings = Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value]))
   res.set({
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
     Pragma: 'no-cache',
     Expires: '0'
   })
-  res.json({ events, news, settings })
+  res.json({ events, news, venues, settings })
 })
 
 const submissionAttempts = new Map()
@@ -653,6 +688,7 @@ app.get('/api/admin/content', requireAuth, (_req, res) => {
   res.json({
     events: db.prepare('SELECT * FROM events ORDER BY event_date, id').all(),
     news: db.prepare('SELECT * FROM news ORDER BY featured DESC, id').all(),
+    venues: db.prepare('SELECT * FROM venues ORDER BY featured DESC, name COLLATE NOCASE, id').all(),
     submissions: submissionsDb.prepare('SELECT * FROM show_submissions ORDER BY reviewed, created_at DESC, id DESC').all(),
     admins: db.prepare('SELECT id, username, created_at FROM admins ORDER BY username COLLATE NOCASE, id').all(),
     settings: Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value]))
@@ -685,6 +721,71 @@ app.put('/api/admin/events/:id', requireAuth, requireCsrf, (req, res) => {
 })
 app.delete('/api/admin/events/:id', requireAuth, requireCsrf, (req, res) => {
   db.prepare('DELETE FROM events WHERE id = ?').run(Number(req.params.id)); res.status(204).end()
+})
+
+app.post('/api/admin/venues', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const item = venueFields(req.body)
+    const result = db.prepare(`INSERT INTO venues (name,address,city,phone,website,description,featured,published)
+      VALUES (@name,@address,@city,@phone,@website,@description,@featured,@published)`).run(item)
+    res.status(201).json({ id: result.lastInsertRowid })
+  } catch (error) { res.status(400).json({ error: error.message }) }
+})
+app.put('/api/admin/venues/:id', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const item = { ...venueFields(req.body), id: Number(req.params.id) }
+    const result = db.prepare(`UPDATE venues SET name=@name,address=@address,city=@city,phone=@phone,website=@website,
+      description=@description,featured=@featured,published=@published,updated_at=CURRENT_TIMESTAMP WHERE id=@id`).run(item)
+    if (!result.changes) return res.status(404).json({ error: 'Venue not found' })
+    res.status(204).end()
+  } catch (error) { res.status(400).json({ error: error.message }) }
+})
+
+const venueImageTypes = {
+  'image/jpeg': { extension: '.jpg', valid: (data) => data.length > 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff },
+  'image/png': { extension: '.png', valid: (data) => data.length > 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) },
+  'image/webp': { extension: '.webp', valid: (data) => data.length > 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP' }
+}
+const removeVenueImage = (imagePath) => {
+  const filename = path.basename(String(imagePath || ''))
+  if (/^[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(filename)) fs.rmSync(path.join(venueImageDir, filename), { force: true })
+}
+const venueImageBody = express.raw({ type: () => true, limit: '5mb' })
+app.put('/api/admin/venues/:id/image', requireAuth, requireCsrf, venueImageBody, (req, res) => {
+  const id = Number(req.params.id)
+  const venue = Number.isSafeInteger(id) ? db.prepare('SELECT image_path FROM venues WHERE id = ?').get(id) : null
+  if (!venue) return res.status(404).json({ error: 'Venue not found' })
+  const type = venueImageTypes[String(req.get('Content-Type') || '').split(';')[0].toLowerCase()]
+  if (!type || !Buffer.isBuffer(req.body) || !type.valid(req.body)) return res.status(415).json({ error: 'Upload a valid JPEG, PNG, or WebP image' })
+  const filename = `${crypto.randomBytes(16).toString('hex')}${type.extension}`
+  const temporary = path.join(venueImageDir, `${filename}.tmp`)
+  const destination = path.join(venueImageDir, filename)
+  try {
+    fs.writeFileSync(temporary, req.body, { mode: 0o600, flag: 'wx' })
+    fs.renameSync(temporary, destination)
+    const imagePath = `/venue-images/${filename}`
+    db.prepare('UPDATE venues SET image_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(imagePath, id)
+    removeVenueImage(venue.image_path)
+    res.json({ image_path: imagePath })
+  } catch (error) {
+    fs.rmSync(temporary, { force: true }); fs.rmSync(destination, { force: true }); throw error
+  }
+})
+app.delete('/api/admin/venues/:id/image', requireAuth, requireCsrf, (req, res) => {
+  const id = Number(req.params.id)
+  const venue = Number.isSafeInteger(id) ? db.prepare('SELECT image_path FROM venues WHERE id = ?').get(id) : null
+  if (!venue) return res.status(404).json({ error: 'Venue not found' })
+  db.prepare("UPDATE venues SET image_path = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id)
+  removeVenueImage(venue.image_path)
+  res.status(204).end()
+})
+app.delete('/api/admin/venues/:id', requireAuth, requireCsrf, (req, res) => {
+  const id = Number(req.params.id)
+  const venue = Number.isSafeInteger(id) ? db.prepare('SELECT image_path FROM venues WHERE id = ?').get(id) : null
+  if (!venue) return res.status(404).json({ error: 'Venue not found' })
+  db.prepare('DELETE FROM venues WHERE id = ?').run(id)
+  removeVenueImage(venue.image_path)
+  res.status(204).end()
 })
 
 const newsFields = (body) => {
@@ -781,6 +882,7 @@ app.put('/api/admin/settings', requireAuth, requireCsrf, (req, res) => {
   res.status(204).end()
 })
 
+app.use('/venue-images', express.static(venueImageDir, { dotfiles: 'deny', fallthrough: false, immutable: production, maxAge: production ? '30d' : 0 }))
 app.use(express.static(path.join(root, 'dist'), { index: false, maxAge: production ? '1h' : 0 }))
 const sendUncachedFile = (res, file) => res.sendFile(file, { headers: {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -800,6 +902,7 @@ app.get('/{*path}', (_req, res) => sendUncachedFile(res, path.join(root, 'dist',
 
 app.use((error, _req, res, _next) => {
   console.error(error)
+  if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'Image must be no larger than 5 MB' })
   res.status(500).json({ error: 'Internal server error' })
 })
 

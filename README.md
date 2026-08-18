@@ -6,6 +6,7 @@ An original three-pane community site scaffold for the Kennewick, Pasco, and Ric
 
 - Responsive left navigation and live SQL-backed community chat
 - Filterable event listings and scene news
+- SQL-backed venue directory with authenticated image uploads
 - Shared FFmpeg-powered randomized ICY radio stream
 - Live show board with compact mobile layouts
 - Accessible semantic markup, keyboard controls, and reduced-motion support
@@ -40,7 +41,7 @@ The application VM owns Node, SQLite, and all site files. The separate Nginx VM 
 
 ## Content and data
 
-Initial listings are seeded into SQLite and can be changed in `/admin`. Events, news, hero copy, and radio status use `tcpmm.sqlite`. The dedicated `/submit/` page collects the same calendar fields as an event plus venue address, description, and contact information using a short-lived, one-time form token. New submissions are isolated in `tcpmm-submissions.sqlite` and appear in the admin **MAIL** inbox. An administrator can publish a complete submission to the live event calendar in one step, then edit the resulting event normally. The public multi-user chat stores messages in the separate `tcpmm-chat.sqlite` database.
+Initial listings are seeded into SQLite and can be changed in `/admin`. Events, news, venues, hero copy, and radio status use `tcpmm.sqlite`. Venue photos are validated JPEG, PNG, or WebP files (up to 5 MB) stored under the configured data directory, while their paths and venue details remain in SQLite. The dedicated `/submit/` page collects the same calendar fields as an event plus venue address, description, and contact information using a short-lived, one-time form token. New submissions are isolated in `tcpmm-submissions.sqlite` and appear in the admin **MAIL** inbox. An administrator can publish a complete submission to the live event calendar in one step, then edit the resulting event normally. The public multi-user chat stores messages in the separate `tcpmm-chat.sqlite` database.
 
 ## Radio
 
