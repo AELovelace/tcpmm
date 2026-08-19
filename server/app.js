@@ -23,6 +23,9 @@ const port = Number(process.env.PORT || 3030)
 const host = process.env.HOST || '127.0.0.1'
 const production = process.env.NODE_ENV === 'production'
 const musicDir = path.resolve(process.env.MUSIC_DIR || path.join(root, 'music'))
+const genres = Object.freeze(['punk', 'metal', 'hardcore', 'rock', 'alternative', 'edm', 'rap', 'other'])
+const genreSqlList = genres.map((genre) => `'${genre}'`).join(',')
+const isGenre = (value) => genres.includes(value) // Keeps API validation aligned with every genre offered by the forms.
 
 const mediaExtensions = new Set(['.aac', '.aiff', '.alac', '.flac', '.m4a', '.mp3', '.ogg', '.opus', '.wav', '.wma'])
 const findMedia = (directory) => {
@@ -185,7 +188,7 @@ submissionsDb.exec(`
     city TEXT NOT NULL DEFAULT '',
     address TEXT NOT NULL,
     lineup TEXT NOT NULL,
-    genre TEXT NOT NULL DEFAULT 'other' CHECK (genre IN ('punk','metal','hardcore','other')),
+    genre TEXT NOT NULL DEFAULT 'other' CHECK (genre IN (${genreSqlList})),
     price TEXT NOT NULL DEFAULT '',
     doors TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL,
@@ -206,6 +209,40 @@ const submissionMigrations = {
 }
 for (const [column, definition] of Object.entries(submissionMigrations)) {
   if (!submissionColumns.has(column)) submissionsDb.exec(`ALTER TABLE show_submissions ADD COLUMN ${column} ${definition}`)
+}
+
+const submissionGenreSchema = submissionsDb.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'show_submissions'").get()?.sql || ''
+if (!genres.every((genre) => submissionGenreSchema.includes(`'${genre}'`))) {
+  submissionsDb.transaction(() => {
+    submissionsDb.exec(`
+      DROP INDEX IF EXISTS show_submissions_reviewed_created;
+      ALTER TABLE show_submissions RENAME TO show_submissions_legacy_genres;
+      CREATE TABLE show_submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_date TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        venue TEXT NOT NULL,
+        city TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL,
+        lineup TEXT NOT NULL,
+        genre TEXT NOT NULL DEFAULT 'other' CHECK (genre IN (${genreSqlList})),
+        price TEXT NOT NULL DEFAULT '',
+        doors TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL,
+        contact TEXT NOT NULL DEFAULT '',
+        reviewed INTEGER NOT NULL DEFAULT 0 CHECK (reviewed IN (0,1)),
+        published_event_id INTEGER,
+        published_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO show_submissions
+        (id, event_date, title, venue, city, address, lineup, genre, price, doors, description, contact, reviewed, published_event_id, published_at, created_at)
+        SELECT id, event_date, title, venue, city, address, lineup, genre, price, doors, description, contact, reviewed, published_event_id, published_at, created_at
+        FROM show_submissions_legacy_genres;
+      DROP TABLE show_submissions_legacy_genres;
+      CREATE INDEX show_submissions_reviewed_created ON show_submissions(reviewed, created_at DESC);
+    `)
+  })() // Rebuilds the constrained table atomically so existing submissions retain every field.
 }
 
 db.exec(`
@@ -229,7 +266,7 @@ db.exec(`
     venue TEXT NOT NULL,
     city TEXT NOT NULL,
     lineup TEXT NOT NULL,
-    genre TEXT NOT NULL CHECK (genre IN ('punk','metal','hardcore','other')),
+    genre TEXT NOT NULL CHECK (genre IN (${genreSqlList})),
     price TEXT NOT NULL DEFAULT '',
     doors TEXT NOT NULL DEFAULT '',
     featured INTEGER NOT NULL DEFAULT 0 CHECK (featured IN (0,1)),
@@ -270,6 +307,35 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `)
+
+const eventGenreSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'").get()?.sql || ''
+if (!genres.every((genre) => eventGenreSchema.includes(`'${genre}'`))) {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE events RENAME TO events_legacy_genres;
+      CREATE TABLE events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        venue TEXT NOT NULL,
+        city TEXT NOT NULL,
+        lineup TEXT NOT NULL,
+        genre TEXT NOT NULL CHECK (genre IN (${genreSqlList})),
+        price TEXT NOT NULL DEFAULT '',
+        doors TEXT NOT NULL DEFAULT '',
+        featured INTEGER NOT NULL DEFAULT 0 CHECK (featured IN (0,1)),
+        published INTEGER NOT NULL DEFAULT 1 CHECK (published IN (0,1)),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO events
+        (id, event_date, title, venue, city, lineup, genre, price, doors, featured, published, created_at, updated_at)
+        SELECT id, event_date, title, venue, city, lineup, genre, price, doors, featured, published, created_at, updated_at
+        FROM events_legacy_genres;
+      DROP TABLE events_legacy_genres;
+    `)
+  })() // Expands the SQLite CHECK constraint without discarding existing event records.
+}
 
 const newsColumns = new Set(db.prepare('PRAGMA table_info(news)').all().map((column) => column.name))
 if (!newsColumns.has('slug')) db.exec("ALTER TABLE news ADD COLUMN slug TEXT NOT NULL DEFAULT ''")
@@ -516,7 +582,7 @@ const eventFields = (body) => {
     price: String(body.price || '').trim(), doors: String(body.doors || '').trim(), featured: body.featured ? 1 : 0,
     published: body.published === false ? 0 : 1
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(item.event_date) || !item.title || !item.venue || !item.city || !item.lineup || !['punk','metal','hardcore','other'].includes(item.genre)) throw new Error('Complete all required event fields')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(item.event_date) || !item.title || !item.venue || !item.city || !item.lineup || !isGenre(item.genre)) throw new Error('Complete all required event fields')
   return item
 }
 
@@ -568,7 +634,7 @@ const submissionFields = (body) => {
     description: submissionText(body?.description, 2000),
     contact: submissionText(body?.contact, 300)
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(item.event_date) || !item.title || !item.venue || !item.city || !item.address || !item.lineup || !['punk','metal','hardcore','other'].includes(item.genre) || !item.description || !item.contact) throw new Error('Complete every required show submission field')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(item.event_date) || !item.title || !item.venue || !item.city || !item.address || !item.lineup || !isGenre(item.genre) || !item.description || !item.contact) throw new Error('Complete every required show submission field')
   const date = new Date(`${item.event_date}T12:00:00Z`)
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== item.event_date) throw new Error('Enter a valid show date')
   return item
@@ -676,7 +742,7 @@ app.get('/radio/stream', (req, res) => {
     'Accept-Ranges': 'none',
     'icy-name': 'TCPM&M Radio',
     'icy-description': 'Tri-Cities punk, metal and more',
-    'icy-genre': 'Punk Metal Hardcore',
+    'icy-genre': 'Punk Metal Hardcore Rock Alternative EDM Rap',
     'icy-br': '128',
     ...(includeMetadata ? { 'icy-metaint': '16000' } : {})
   })

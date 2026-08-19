@@ -1,6 +1,6 @@
 import './style.css'
 
-type Genre = 'all' | 'punk' | 'metal' | 'hardcore' | 'other'
+type Genre = 'all' | 'punk' | 'metal' | 'hardcore' | 'rock' | 'alternative' | 'edm' | 'rap' | 'other'
 
 type ContentEvent = {
   id: number
@@ -34,6 +34,12 @@ let events: ContentEvent[] = [
   { id: 4, event_date: '2026-09-13', title: 'FREAK FREQUENCIES', venue: 'Uptown Room', city: 'Richland', lineup: 'Ghost Bloom / Static TV / DJ Rat King', genre: 'other', price: '$12', doors: '8 PM', featured: 0 },
 ]
 let venues: Venue[] = []
+let news: NewsItem[] = [
+  { id: 1, label: 'SCENE REPORT', title: "DIY IS NOT A GENRE. IT'S HOW WE SURVIVE.", summary: 'A starter guide to booking a room, making a bill, and keeping the door open for the next band.', link: '/submit/', featured: 1 },
+  { id: 2, label: 'CALL FOR SUBMISSIONS · AUG 16', title: 'Send us your flyers, demos, photos, and dispatches.', summary: '', link: '/submit/', featured: 0 },
+  { id: 3, label: 'VENUE WATCH · AUG 11', title: 'Four rooms keeping original music on the calendar.', summary: '', link: '#venues', featured: 0 },
+  { id: 4, label: 'NEW RELEASE · AUG 03', title: 'Three local records for your next late-night drive.', summary: '', link: '#radio', featured: 0 },
+]
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character] ?? character)
 
@@ -111,6 +117,10 @@ app.innerHTML = `
           <button class="filter" type="button" data-genre="punk">PUNK</button>
           <button class="filter" type="button" data-genre="metal">METAL</button>
           <button class="filter" type="button" data-genre="hardcore">HARDCORE</button>
+          <button class="filter" type="button" data-genre="rock">ROCK</button>
+          <button class="filter" type="button" data-genre="alternative">ALTERNATIVE</button>
+          <button class="filter" type="button" data-genre="edm">EDM</button>
+          <button class="filter" type="button" data-genre="rap">RAP</button>
           <button class="filter" type="button" data-genre="other">OTHER</button>
         </div>
         <div class="event-list" id="event-list"></div>
@@ -134,6 +144,7 @@ app.innerHTML = `
             <article><span>NEW RELEASE · AUG 03</span><h3>Three local records for your next late-night drive.</h3><a href="#radio" aria-label="Read local record roundup">↗</a></article>
           </div>
         </div>
+        <button class="news-catalog-link" id="news-catalog-open" type="button" aria-haspopup="dialog">VIEW ALL TRANSMISSIONS <span>↗</span></button>
       </section>
 
       <section class="venues-section" id="venues" aria-labelledby="venues-title">
@@ -185,6 +196,17 @@ app.innerHTML = `
       <div class="right-footer"><span>WANT YOUR SHOW HERE?</span><a href="/submit/">SUBMIT A SHOW ↗</a></div>
     </aside>
   </div>
+
+  <div class="news-modal" id="news-modal" hidden>
+    <div class="news-modal-backdrop" data-close-modal></div>
+    <div class="news-modal-panel" role="dialog" aria-modal="true" aria-labelledby="news-modal-title">
+      <div class="section-bar">
+        <h2 id="news-modal-title">// ALL TRANSMISSIONS</h2>
+        <button class="text-button" id="news-modal-close" type="button" aria-label="Close article catalog">CLOSE ✕</button>
+      </div>
+      <div class="news-modal-list" id="news-modal-list"></div>
+    </div>
+  </div>
 `
 
 const eventList = document.querySelector<HTMLDivElement>('#event-list')
@@ -208,6 +230,7 @@ renderEvents('all')
 const renderNews = (items: NewsItem[]) => {
   const grid = document.querySelector<HTMLDivElement>('#news-grid')
   if (!grid || !items.length) return
+  news = items
   const lead = items.find((item) => item.featured) ?? items[0]
   const secondary = items.filter((item) => item.id !== lead.id).slice(0, 3)
   grid.innerHTML = `
@@ -447,3 +470,48 @@ document.querySelectorAll<HTMLAnchorElement>('.left-rail a').forEach((link) => {
     menuToggle?.setAttribute('aria-expanded', 'false')
   })
 })
+
+const newsModal = document.querySelector<HTMLDivElement>('#news-modal')
+const newsModalList = document.querySelector<HTMLDivElement>('#news-modal-list')
+const newsCatalogOpen = document.querySelector<HTMLButtonElement>('#news-catalog-open')
+const newsModalClose = document.querySelector<HTMLButtonElement>('#news-modal-close')
+let newsModalLastFocus: HTMLElement | null = null
+
+const renderNewsCatalog = () => {
+  if (!newsModalList) return
+  if (!news.length) { newsModalList.innerHTML = '<p class="news-modal-empty">NO TRANSMISSIONS YET.</p>'; return }
+  newsModalList.innerHTML = news.map((item) => `
+    <article class="news-modal-item${item.featured ? ' featured' : ''}">
+      <span>${escapeHtml(item.label)}</span>
+      <h3>${escapeHtml(item.title)}</h3>
+      ${item.summary ? `<p>${escapeHtml(item.summary)}</p>` : ''}
+      <a href="${escapeHtml(item.link)}">READ TRANSMISSION →</a>
+    </article>
+  `).join('')
+}
+
+const onNewsModalKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') hideNewsModal()
+}
+
+function showNewsModal() {
+  if (!newsModal) return
+  renderNewsCatalog()
+  newsModalLastFocus = document.activeElement as HTMLElement | null
+  newsModal.hidden = false
+  document.body.classList.add('modal-open')
+  document.addEventListener('keydown', onNewsModalKeydown)
+  newsModalClose?.focus()
+}
+
+function hideNewsModal() {
+  if (!newsModal || newsModal.hidden) return
+  newsModal.hidden = true
+  document.body.classList.remove('modal-open')
+  document.removeEventListener('keydown', onNewsModalKeydown)
+  newsModalLastFocus?.focus()
+}
+
+newsCatalogOpen?.addEventListener('click', showNewsModal)
+newsModalClose?.addEventListener('click', hideNewsModal)
+newsModal?.querySelectorAll<HTMLElement>('[data-close-modal]').forEach((element) => element.addEventListener('click', hideNewsModal))
