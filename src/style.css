@@ -299,26 +299,26 @@ body {
 .left-rail, .right-rail, .radio, .live-board { background: #080a0c; color: #d8d8d3; }
 
 .brand-block {
-  padding: .85rem .9rem 1rem;
+  padding: 1.5rem 1rem;
   border-color: #34373c;
   background: #080a0c;
   background-image: linear-gradient(90deg, rgba(215, 25, 54, .08) 1px, transparent 1px);
   background-size: 12px 100%;
 }
-.eyebrow { margin-bottom: .45rem; color: #8c9298; font-size: .52rem; letter-spacing: .1em; }
+.eyebrow { color: #8c9298; letter-spacing: .12em; }
 .eyebrow::before { content: '[NODE:WA-509] '; color: var(--signal); }
 .brand { transform: none; line-height: 1; }
-.brand span { color: #9da2a7; font-family: 'IBM Plex Mono', Consolas, monospace; font-size: .68rem; letter-spacing: .14em; }
+.brand span { color: #9da2a7; font-family: 'IBM Plex Mono', Consolas, monospace; font-size: .8rem; letter-spacing: .16em; }
 .brand strong {
-  margin-top: .25rem;
+  margin-top: .45rem;
   color: #f0f0eb;
   font-family: 'IBM Plex Mono', Consolas, monospace;
-  font-size: clamp(1.5rem, 2.2vw, 2.15rem);
+  font-size: clamp(1.7rem, 2.6vw, 2.7rem);
   line-height: .9;
   letter-spacing: -.08em;
   text-shadow: none;
 }
-.brand em { margin-top: .4rem; padding: .2rem .35rem; background: var(--signal); color: #fff; font-size: .56rem; letter-spacing: .08em; }
+.brand em { margin-top: .8rem; background: var(--signal); color: #fff; letter-spacing: .1em; }
 
 .primary-nav { border-color: #34373c; }
 .primary-nav a { border-color: #24272b; color: #858a90; }
@@ -341,8 +341,8 @@ body {
 .message-row button { background: #181b1f; border: 1px solid #34373c; border-left: 2px solid var(--signal); color: var(--signal); }
 
 .hero {
-  min-height: 610px;
-  padding: clamp(2rem, 5vw, 5rem);
+  min-height: 330px;
+  padding: clamp(1.25rem, 2.5vw, 2rem);
   border-color: #34373c;
   background-color: #080a0c;
   background-image:
@@ -353,43 +353,43 @@ body {
 .hero::before { display: none; }
 .hero::after {
   content: 'SYSTEM://COMMUNITY_UPLINK\A REGION: TRI-CITIES_WA\A NODE: KENNEWICK_PASCO_RICHLAND\A STATUS: LISTENING_';
-  top: 3rem;
-  right: 3rem;
-  width: 250px;
+  top: 1.25rem;
+  right: 1.5rem;
+  width: 210px;
   height: auto;
-  padding: 1rem;
+  padding: .75rem;
   border: 1px solid #3a3e43;
   border-left: 3px solid var(--signal);
   background: rgba(4, 5, 6, .88);
   color: #757b81;
-  font: .55rem/1.8 'IBM Plex Mono', Consolas, monospace;
+  font: .5rem/1.55 'IBM Plex Mono', Consolas, monospace;
   letter-spacing: .02em;
   white-space: pre-wrap;
   transform: none;
   text-shadow: none;
 }
-.hero-kicker { margin-top: 1rem; color: #858a90; letter-spacing: .08em; }
+.hero-kicker { margin-top: 0; color: #858a90; letter-spacing: .08em; }
 .hero-kicker::before { content: '[REGION]'; color: var(--signal); }
 .hero-kicker i { width: 3px; height: 9px; border-radius: 0; background: #4d5156; }
 .hero h1 {
-  max-width: 720px;
-  margin: 7rem 0 2rem;
+  max-width: min(620px, calc(100% - 230px));
+  margin: 1.5rem 0 .75rem;
   color: #f0f0eb;
-  font: clamp(3.5rem, 7vw, 7.2rem)/.82 'IBM Plex Mono', Consolas, monospace;
+  font: clamp(2.5rem, 4.4vw, 4.2rem)/.8 'IBM Plex Mono', Consolas, monospace;
   letter-spacing: -.1em;
 }
 .hero h1::before { content: '> '; color: var(--signal); }
 .hero h1 span { color: #8f949a; -webkit-text-stroke: 0; }
-.hero > p { color: #9ba0a5; font-weight: 400; }
+.hero > p { max-width: min(500px, calc(100% - 230px)); margin-bottom: 1rem; color: #9ba0a5; font-size: .7rem; line-height: 1.5; font-weight: 400; }
 .cta { border: 1px solid #45494f; background: #101216; box-shadow: none; color: #e5e5e0; }
 .cta::before { content: './'; color: var(--signal); }
 .cta:hover { border-color: var(--signal); color: #fff; transform: none; box-shadow: inset 0 -2px var(--signal); }
 .hero-stamp {
-  right: 3rem;
-  bottom: 3rem;
+  right: 1.5rem;
+  bottom: 1.25rem;
   width: auto;
   height: auto;
-  padding: .7rem;
+  padding: .5rem;
   border: 1px solid #3a3e43;
   border-radius: 0;
   background: #0d0f12;
@@ -462,13 +462,12 @@ footer { background: #050607; color: #a2a6aa; }
 .right-footer { background: #050607; }
 
 @media (max-width: 780px) {
-  .mobile-header { height: 44px; padding: .35rem .65rem; background: #050607; border-color: var(--signal); }
-  .mini-mark { font-size: .82rem; }
+  .mobile-header { background: #050607; border-color: var(--signal); }
   .mini-mark span { color: var(--signal); }
-  .menu-toggle { padding: .35rem .5rem; border-color: var(--signal); color: var(--signal); font-size: .5rem; }
-  .left-rail { top: 44px; height: calc(100vh - 44px); }
-  .hero { min-height: 620px; }
-  .hero::after { top: 2rem; right: 1.25rem; width: calc(100% - 2.5rem); }
-  .hero h1 { margin-top: 10rem; font-size: clamp(3rem, 15vw, 5.4rem); }
-  .hero-stamp { right: 1.25rem; bottom: 1.25rem; }
+  .menu-toggle { border-color: var(--signal); color: var(--signal); }
+  .hero { min-height: 330px; padding: 1.25rem; }
+  .hero::after, .hero-stamp { display: none; }
+  .hero h1 { max-width: none; margin: 1.5rem 0 .75rem; font-size: clamp(2.5rem, 13vw, 3.8rem); }
+  .hero > p { max-width: 520px; margin-bottom: 1rem; line-height: 1.45; }
+  .cta { gap: 2rem; padding: .65rem .8rem; }
 }
