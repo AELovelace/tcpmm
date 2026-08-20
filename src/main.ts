@@ -171,7 +171,15 @@ app.innerHTML = `
           <div class="wave" id="radio-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <p>LIVE AUDIO<br />BROADCAST</p>
         </div>
-        <div class="now-playing"><span>NOW PLAYING</span><strong id="radio-track">NO SIGNAL</strong><small id="radio-message"></small></div>
+        <div class="now-playing">
+          <span>NOW PLAYING</span>
+          <strong class="radio-track" id="radio-track">NO SIGNAL</strong>
+          <dl class="track-credits">
+            <div><dt>ARTIST</dt><dd id="radio-artist">—</dd></div>
+            <div><dt>ALBUM</dt><dd id="radio-album">—</dd></div>
+          </dl>
+          <small id="radio-message"></small>
+        </div>
         <div class="volume"><label for="radio-volume">VOL</label><input id="radio-volume" type="range" min="0" max="100" value="70" aria-label="Radio volume" /><span id="radio-volume-value">70</span><button id="radio-play" type="button" aria-label="Play radio">▶</button></div>
       </section>
 
@@ -303,12 +311,16 @@ const updateRadioStatus = async () => {
   try {
     const response = await fetch('/api/radio/status', { cache: 'no-store' })
     if (!response.ok) return
-    const status = await response.json() as { online: boolean; title: string; trackCount: number }
+    const status = await response.json() as { online: boolean; title: string; artist: string; album: string; trackCount: number }
     const statusNode = document.querySelector<HTMLElement>('#radio-status')
     const trackNode = document.querySelector<HTMLElement>('#radio-track')
+    const artistNode = document.querySelector<HTMLElement>('#radio-artist')
+    const albumNode = document.querySelector<HTMLElement>('#radio-album')
     const messageNode = document.querySelector<HTMLElement>('#radio-message')
     if (statusNode) statusNode.textContent = status.online ? 'ON AIR' : 'OFFLINE'
     if (trackNode) trackNode.textContent = status.title
+    if (artistNode) artistNode.textContent = status.artist || 'UNKNOWN ARTIST'
+    if (albumNode) albumNode.textContent = status.album || 'UNKNOWN ALBUM'
     if (messageNode) messageNode.textContent = status.trackCount ? `RANDOM LOOP · ${status.trackCount} TRACK${status.trackCount === 1 ? '' : 'S'}` : 'Add audio files to the music folder.'
     if (radioPlay) radioPlay.disabled = status.trackCount === 0
   } catch { /* The static development site has no radio API. */ }

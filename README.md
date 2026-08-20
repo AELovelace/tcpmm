@@ -47,6 +47,6 @@ Event listings and show submissions support punk, metal, hardcore, rock, alterna
 
 ## Radio
 
-Place licensed audio files in the `music` directory. The Node process scans supported audio formats, randomizes all tracks, streams them through FFmpeg as a shared 128 kbps MP3 broadcast, and reshuffles the playlist after every complete loop. New listeners join the currently playing track through `/radio/stream`; ICY clients that send `Icy-MetaData: 1` also receive `StreamTitle` metadata.
+Place licensed audio files in the `music` directory. The Node process scans supported audio formats, randomizes all tracks, streams them through FFmpeg as a shared 128 kbps MP3 broadcast, and reshuffles the playlist after every complete loop. The site displays the current song title, artist, and album from embedded media tags. Missing tags fall back to a `music/Artist/Album/Song.ext` directory layout. New listeners join the currently playing track through `/radio/stream`; ICY clients that send `Icy-MetaData: 1` also receive artist and title in `StreamTitle` metadata.
 
-FFmpeg must be installed and available on `PATH`. Set `FFMPEG_PATH` or `MUSIC_DIR` to override the executable or media directory. The directory is rescanned at the start of each playlist loop and every five seconds while empty.
+FFmpeg and FFprobe must be installed and available on `PATH`. Set `FFMPEG_PATH`, `FFPROBE_PATH`, or `MUSIC_DIR` to override the executables or media directory. The directory is rescanned at the start of each playlist loop and every five seconds while empty.

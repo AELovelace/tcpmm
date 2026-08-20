@@ -183,10 +183,15 @@ footer span { color: #716d63; text-align: center; }
 .wave.playing i:nth-child(5n) { animation-delay: -.13s; animation-duration: .36s; }
 .radio-screen p { margin: 0; font-size: .63rem; line-height: 1.5; }
 .now-playing { padding: 1rem; border-bottom: 1px solid #4a493f; }
-.now-playing span, .now-playing strong, .now-playing small { display: block; }
-.now-playing span { color: #6c6a60; font-size: .5rem; }
-.now-playing strong { margin: .35rem 0; color: var(--signal); font-size: .9rem; }
+.now-playing > span, .now-playing > strong, .now-playing > small { display: block; }
+.now-playing > span { color: #6c6a60; font-size: .5rem; }
+.now-playing .radio-track { margin: .35rem 0 .65rem; color: var(--signal); font-size: .9rem; overflow-wrap: anywhere; }
 .now-playing small { color: #77756b; font-size: .52rem; }
+.track-credits { display: grid; gap: .35rem; margin: 0 0 .65rem; }
+.track-credits div { display: grid; grid-template-columns: 3.6rem minmax(0, 1fr); gap: .4rem; }
+.track-credits dt, .track-credits dd { margin: 0; font-size: .52rem; line-height: 1.35; }
+.track-credits dt { color: #6c6a60; }
+.track-credits dd { color: #b9b9b3; overflow-wrap: anywhere; }
 .volume { display: grid; grid-template-columns: auto 1fr 2ch 34px; gap: .5rem; align-items: center; padding: 1rem; color: #77756b; font-size: .48rem; }
 .volume input { width: 100%; height: 3px; accent-color: var(--signal); cursor: pointer; }
 .volume button { width: 34px; height: 34px; padding: 0; border: 1px solid var(--signal); background: #121419; color: var(--signal); cursor: pointer; }

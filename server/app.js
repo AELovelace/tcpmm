@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,8 @@ const port = Number(process.env.PORT || 3030)
 const host = process.env.HOST || '127.0.0.1'
 const production = process.env.NODE_ENV === 'production'
 const musicDir = path.resolve(process.env.MUSIC_DIR || path.join(root, 'music'))
+const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg'
+const ffprobePath = process.env.FFPROBE_PATH || 'ffprobe'
 const genres = Object.freeze(['punk', 'metal', 'hardcore', 'rock', 'alternative', 'edm', 'rap', 'other'])
 const genreSqlList = genres.map((genre) => `'${genre}'`).join(',')
 const isGenre = (value) => genres.includes(value) // Keeps API validation aligned with every genre offered by the forms.
@@ -44,6 +46,28 @@ const shuffled = (items) => {
   return result
 }
 
+const cleanMetadata = (value) => typeof value === 'string' ? value.trim().slice(0, 200) : '' // Normalizes untrusted media tags before they reach the public status API.
+const readTrackMetadata = (file, directory) => {
+  const titleFallback = path.basename(file, path.extname(file)).replaceAll('_', ' ').trim()
+  const folders = path.relative(directory, path.dirname(file)).split(path.sep).filter((folder) => folder && folder !== '.')
+  const artistFallback = folders[0] || ''
+  const albumFallback = folders.length > 1 ? folders.slice(1).join(' / ') : ''
+  try {
+    const probe = spawnSync(ffprobePath, [
+      '-v', 'quiet', '-show_entries', 'format_tags=title,artist,album', '-of', 'json', file
+    ], { encoding: 'utf8', windowsHide: true, timeout: 5000, maxBuffer: 64 * 1024 })
+    const tags = probe.status === 0 ? JSON.parse(probe.stdout || '{}')?.format?.tags ?? {} : {}
+    const normalizedTags = Object.fromEntries(Object.entries(tags).map(([key, value]) => [key.toLowerCase(), value]))
+    return {
+      title: cleanMetadata(normalizedTags.title) || titleFallback,
+      artist: cleanMetadata(normalizedTags.artist) || artistFallback,
+      album: cleanMetadata(normalizedTags.album) || albumFallback
+    }
+  } catch {
+    return { title: titleFallback, artist: artistFallback, album: albumFallback }
+  }
+} // Reads embedded tags for the current song and falls back to the music/Artist/Album folder convention.
+
 class IcyRadio {
   constructor(directory) {
     this.directory = directory
@@ -52,6 +76,8 @@ class IcyRadio {
     this.process = null
     this.retryTimer = null
     this.title = 'NO SIGNAL'
+    this.artist = ''
+    this.album = ''
     this.trackCount = 0
     this.online = false
     this.stopping = false
@@ -75,12 +101,17 @@ class IcyRadio {
     if (!file) {
       this.online = false
       this.title = 'ADD TRACKS TO /MUSIC'
+      this.artist = ''
+      this.album = ''
       this.retryTimer = setTimeout(() => this.playNext(), 5000)
       return
     }
 
-    this.title = path.basename(file, path.extname(file)).replaceAll('_', ' ')
-    const ffmpeg = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
+    const metadata = readTrackMetadata(file, this.directory)
+    this.title = metadata.title
+    this.artist = metadata.artist
+    this.album = metadata.album
+    const ffmpeg = spawn(ffmpegPath, [
       '-hide_banner', '-loglevel', 'error', '-fflags', '+genpts', '-re', '-i', file, '-vn',
       '-af', 'asetpts=N/SR/TB',
       '-map_metadata', '-1', '-ac', '2', '-ar', '44100', '-codec:a', 'libmp3lame',
@@ -105,7 +136,8 @@ class IcyRadio {
   }
 
   metadataBlock() {
-    const escapedTitle = this.title.replaceAll("'", '’').slice(0, 240)
+    const trackLabel = [this.artist, this.title].filter(Boolean).join(' - ')
+    const escapedTitle = trackLabel.replaceAll("'", '’').slice(0, 240)
     const metadata = Buffer.from(`StreamTitle='${escapedTitle}';`, 'latin1')
     const blocks = Math.ceil(metadata.length / 16)
     const result = Buffer.alloc(1 + blocks * 16)
@@ -729,7 +761,7 @@ app.post('/api/chat/messages', (req, res) => {
 
 app.get('/api/radio/status', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store')
-  res.json({ online: radio.online, title: radio.title, trackCount: radio.trackCount, listeners: radio.listeners.size })
+  res.json({ online: radio.online, title: radio.title, artist: radio.artist, album: radio.album, trackCount: radio.trackCount, listeners: radio.listeners.size })
 })
 
 app.get('/radio/stream', (req, res) => {
