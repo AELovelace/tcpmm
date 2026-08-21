@@ -1192,6 +1192,11 @@ app.put('/api/admin/settings', requireAuth, requireCsrf, (req, res) => {
 })
 
 app.use('/venue-images', express.static(venueImageDir, { dotfiles: 'deny', fallthrough: false, immutable: production, maxAge: production ? '30d' : 0 }))
+app.use('/admin', express.static(path.join(root, 'dist', 'admin'), {
+  index: false,
+  maxAge: 0,
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+})) // Prevents privileged HTML and JavaScript from surviving deployments with an incompatible role or security contract.
 app.use(express.static(path.join(root, 'dist'), { index: false, maxAge: production ? '1h' : 0 }))
 const sendUncachedFile = (res, file) => res.sendFile(file, { headers: {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',

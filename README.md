@@ -36,6 +36,8 @@ The Node process loads `.env`, then serves the built site, `/api` endpoints, and
 
 The control panel has two operator tiers. Organizers can manage **SITE**, **MAIL**, **EVENTS**, **VENUES**, and **NEWS**. Full administrators can do everything organizers can, plus manage accounts in **USERS** and publishing credentials in **API KEYS**. Existing accounts are migrated to the full administrator role. Password resets revoke that operator's existing sessions, role changes take effect on the next request, and the final full administrator cannot be demoted or deleted.
 
+Admin HTML, styles, and JavaScript are served with `Cache-Control: no-store` because the browser controls must remain synchronized with the server's current authorization contract after every deployment.
+
 ### Administrator recovery
 
 Someone with direct write access to the application database can restore an existing organizer account to the administrator role. The recovery tool makes an online SQLite backup, changes only the requested account, and revokes that account's existing sessions:

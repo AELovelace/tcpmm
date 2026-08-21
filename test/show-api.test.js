@@ -80,6 +80,15 @@ test('rejects a missing Bearer credential', async () => {
   assert.equal((await response.json()).error.code, 'invalid_token')
 })
 
+test('serves the admin application with deployment-safe cache headers', async () => {
+  const page = await fetch(`${baseUrl}/admin`)
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /admin\.js\?v=20260821-2/)
+  const script = await fetch(`${baseUrl}/admin/admin.js?v=20260821-2`)
+  assert.equal(script.status, 200)
+  assert.match(script.headers.get('cache-control') || '', /no-store/)
+}) // Prevents an old privileged browser bundle from surviving a deployment that changes roles or protected controls.
+
 test('rejects an incorrect credential and malformed JSON', async () => {
   const unauthorized = await fetch(`${baseUrl}/api/v1/shows`, {
     method: 'POST', headers: { Authorization: `Bearer tcpmm_${'x'.repeat(43)}` }
