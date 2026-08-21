@@ -51,4 +51,20 @@ Site data and sessions are stored in `/var/lib/tcpmm/tcpmm.sqlite`; public chat 
 
 Use `deploy/nginx.conf` as the site configuration. Replace `APP_VM_PRIVATE_IP`, hostname, and TLS certificate paths. The required forwarded headers are included. `TRUST_PROXY=1` on the application VM makes HTTPS admin session cookies work correctly through the proxy.
 
+The supplied proxy configuration redirects plain HTTP to the canonical HTTPS URL, sends HSTS on HTTPS responses, limits general request bursts, and applies tighter per-IP limits to login, submission, and chat endpoints. It also permits at most six concurrent chat event streams and three radio streams per source IP. The application enforces the same stream ceilings and global caps if traffic reaches it without the proxy.
+
+The `map`, `limit_req_zone`, and `limit_conn_zone` directives belong in Nginx's `http` context. Standard `conf.d` and `sites-enabled` files are already included from that context. After installing or changing the configuration, validate and reload it on the proxy VM:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Verify both entry points from another machine. HTTP should return `308` with an HTTPS `Location`, while HTTPS should include `Strict-Transport-Security`:
+
+```bash
+curl -I http://tcpmm.wtf/
+curl -I https://tcpmm.wtf/
+```
+
 The admin interface is available at `/admin`. The API and admin panel are not separate services.

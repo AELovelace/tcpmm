@@ -516,7 +516,19 @@ app.use((_req, res, next) => {
   next()
 })
 
-const parseCookies = (header = '') => Object.fromEntries(header.split(';').map((item) => item.trim().split('=').map(decodeURIComponent)).filter((pair) => pair.length === 2))
+const parseCookies = (header = '') => {
+  const cookies = Object.create(null)
+  for (const item of String(header).split(';')) {
+    const separator = item.indexOf('=')
+    if (separator < 1) continue
+    try {
+      const name = decodeURIComponent(item.slice(0, separator).trim())
+      const value = decodeURIComponent(item.slice(separator + 1).trim())
+      if (name) cookies[name] = value
+    } catch { /* Ignores only the malformed cookie pair so hostile percent encoding cannot fail the request. */ }
+  }
+  return cookies
+} // Parses cookies defensively into a prototype-free object and skips invalid percent encoding.
 const tokenHash = (token) => crypto.createHash('sha256').update(token).digest('hex')
 const safeEqual = (a, b) => {
   const left = Buffer.from(a, 'hex')
@@ -550,13 +562,19 @@ const listShowApiKeys = () => {
 
 const failedShowApiAttempts = new Map()
 const showApiAttempts = new Map()
+const maximumAbuseBuckets = 10_000
+const maximumSubmissionTokens = 5_000
 const pruneAttempts = (attempts, now, windowMs) => attempts.filter((time) => now - time < windowMs) // Keeps each in-memory rate-limit bucket bounded to its active time window.
+const setBoundedMapValue = (map, key, value, maximum = maximumAbuseBuckets) => {
+  if (!map.has(key) && map.size >= maximum) map.delete(map.keys().next().value)
+  map.set(key, value)
+} // Evicts the oldest bucket before attacker-controlled keys can make an in-memory limiter grow without bound.
 const requireShowApiKey = (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store')
   const now = Date.now()
   const failed = pruneAttempts(failedShowApiAttempts.get(req.ip) || [], now, 15 * 60_000)
   if (failed.length >= 20) {
-    failedShowApiAttempts.set(req.ip, failed)
+    setBoundedMapValue(failedShowApiAttempts, req.ip, failed)
     res.setHeader('Retry-After', '900')
     return res.status(429).json({ error: { code: 'rate_limited', message: 'Too many authentication attempts; try again later' } })
   }
@@ -570,19 +588,19 @@ const requireShowApiKey = (req, res, next) => {
     : configuredCredential ? { ledgerId: `environment:${configuredCredential.id}` } : null
   if (!credential) {
     failed.push(now)
-    failedShowApiAttempts.set(req.ip, failed)
+    setBoundedMapValue(failedShowApiAttempts, req.ip, failed)
     res.setHeader('WWW-Authenticate', 'Bearer realm="show-api"')
     return res.status(401).json({ error: { code: 'invalid_token', message: 'A valid show API Bearer token is required' } })
   }
   failedShowApiAttempts.delete(req.ip)
   const recent = pruneAttempts(showApiAttempts.get(credential.ledgerId) || [], now, 60 * 60_000)
   if (recent.length >= 60) {
-    showApiAttempts.set(credential.ledgerId, recent)
+    setBoundedMapValue(showApiAttempts, credential.ledgerId, recent)
     res.setHeader('Retry-After', '3600')
     return res.status(429).json({ error: { code: 'rate_limited', message: 'Show API rate limit exceeded; try again later' } })
   }
   recent.push(now)
-  showApiAttempts.set(credential.ledgerId, recent)
+  setBoundedMapValue(showApiAttempts, credential.ledgerId, recent)
   if (credential.storedId) db.prepare('UPDATE show_api_keys SET last_used_at = CURRENT_TIMESTAMP, request_count = request_count + 1 WHERE id = ?').run(credential.storedId)
   req.showApiKeyId = credential.ledgerId
   next()
@@ -613,13 +631,16 @@ app.post('/api/admin/login', (req, res) => {
   const key = req.ip
   const attempt = loginAttempts.get(key) || { count: 0, reset: Date.now() + 15 * 60_000 }
   if (Date.now() > attempt.reset) { attempt.count = 0; attempt.reset = Date.now() + 15 * 60_000 }
-  if (attempt.count >= 8) return res.status(429).json({ error: 'Too many attempts; try again later' })
+  if (attempt.count >= 8) {
+    res.setHeader('Retry-After', '900')
+    return res.status(429).json({ error: 'Too many attempts; try again later' })
+  }
   const username = String(req.body?.username || '').trim()
   const password = String(req.body?.password || '')
   const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username)
   if (!admin || !safeEqual(hashPassword(password, admin.password_salt), admin.password_hash)) {
     attempt.count += 1
-    loginAttempts.set(key, attempt)
+    setBoundedMapValue(loginAttempts, key, attempt)
     return res.status(401).json({ error: 'Invalid credentials' })
   }
   loginAttempts.delete(key)
@@ -858,6 +879,7 @@ app.get('/api/v1/shows/:id', requireShowApiKey, (req, res) => {
 }) // Lets an API tester verify the exact stored record without using an administrator session.
 
 const submissionAttempts = new Map()
+const submissionTokenAttempts = new Map()
 const submissionTokens = new Map()
 const submissionText = (value, maximum) => (typeof value === 'string' ? value : '').normalize('NFKC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, maximum)
 const submissionFields = (body) => {
@@ -883,11 +905,19 @@ const submissionFields = (body) => {
 app.get('/api/show-submissions/form-token', (req, res) => {
   const now = Date.now()
   for (const [token, record] of submissionTokens) if (record.expires < now) submissionTokens.delete(token)
+  const recent = pruneAttempts(submissionTokenAttempts.get(req.ip) || [], now, 60_000)
+  if (recent.length >= 20) {
+    setBoundedMapValue(submissionTokenAttempts, req.ip, recent)
+    res.setHeader('Retry-After', '60')
+    return res.status(429).json({ error: 'Too many secure-form requests; try again later' })
+  }
+  recent.push(now)
+  setBoundedMapValue(submissionTokenAttempts, req.ip, recent)
   const token = crypto.randomBytes(24).toString('base64url')
-  submissionTokens.set(token, { ip: req.ip, created: now, expires: now + 30 * 60_000 })
+  setBoundedMapValue(submissionTokens, token, { ip: req.ip, created: now, expires: now + 30 * 60_000 }, maximumSubmissionTokens)
   res.setHeader('Cache-Control', 'no-store')
   res.json({ token })
-})
+}) // Limits anonymous token minting and caps the number of outstanding one-time tokens held in memory.
 
 app.post('/api/show-submissions', (req, res) => {
   if (req.body?.website) return res.status(201).json({ received: true })
@@ -901,7 +931,7 @@ app.post('/api/show-submissions', (req, res) => {
   }
   const recent = (submissionAttempts.get(key) || []).filter((time) => now - time < 60 * 60_000)
   if (recent.length >= 5) {
-    submissionAttempts.set(key, recent)
+    setBoundedMapValue(submissionAttempts, key, recent)
     res.setHeader('Retry-After', '3600')
     return res.status(429).json({ error: 'Too many submissions; try again later' })
   }
@@ -912,12 +942,51 @@ app.post('/api/show-submissions', (req, res) => {
       VALUES (@event_date, @title, @venue, @city, @address, @lineup, @genre, @price, @doors, @description, @contact)`).run(item)
   } catch (error) { return res.status(400).json({ error: error.message }) }
   recent.push(now)
-  submissionAttempts.set(key, recent)
+  setBoundedMapValue(submissionAttempts, key, recent)
   res.status(201).json({ received: true })
 })
 
 const chatAttempts = new Map()
 const chatListeners = new Set()
+const chatConnectionsByIp = new Map()
+const radioConnectionsByIp = new Map()
+const maximumChatListeners = 500
+const maximumRadioListeners = 200
+const maximumChatConnectionsPerIp = 6
+const maximumRadioConnectionsPerIp = 3
+const reserveConnection = (connections, key, maximum, response) => {
+  const active = connections.get(key) || 0
+  if (active >= maximum) return false
+  connections.set(key, active + 1)
+  let released = false
+  response.once('close', () => {
+    if (released) return
+    released = true
+    const remaining = (connections.get(key) || 1) - 1
+    if (remaining > 0) connections.set(key, remaining)
+    else connections.delete(key)
+  })
+  return true
+} // Reserves and automatically releases one long-lived connection slot for a client IP.
+const cleanupAbuseState = () => {
+  const now = Date.now()
+  const cleanAttempts = (map, windowMs) => {
+    for (const [key, attempts] of map) {
+      const recent = pruneAttempts(attempts, now, windowMs)
+      if (recent.length) map.set(key, recent)
+      else map.delete(key)
+    }
+  }
+  cleanAttempts(failedShowApiAttempts, 15 * 60_000)
+  cleanAttempts(showApiAttempts, 60 * 60_000)
+  cleanAttempts(submissionAttempts, 60 * 60_000)
+  cleanAttempts(submissionTokenAttempts, 60_000)
+  cleanAttempts(chatAttempts, 30_000)
+  for (const [key, attempt] of loginAttempts) if (attempt.reset < now) loginAttempts.delete(key)
+  for (const [token, record] of submissionTokens) if (record.expires < now) submissionTokens.delete(token)
+} // Periodically removes expired rate-limit buckets and form tokens even when a client never returns.
+const abuseCleanupTimer = setInterval(cleanupAbuseState, 60_000)
+abuseCleanupTimer.unref()
 const chatRow = (row) => ({ id: row.id, name: row.name, text: row.text, system: Boolean(row.system), createdAt: row.created_at })
 const chatText = (value, maximum) => (typeof value === 'string' ? value : '').normalize('NFKC').replace(/[\u0000-\u001F\u007F]/g, '').replace(/\s+/g, ' ').trim().slice(0, maximum)
 
@@ -932,6 +1001,10 @@ app.get('/api/chat/messages', (req, res) => {
 })
 
 app.get('/api/chat/events', (req, res) => {
+  if (chatListeners.size >= maximumChatListeners || !reserveConnection(chatConnectionsByIp, req.ip, maximumChatConnectionsPerIp, res)) {
+    res.setHeader('Retry-After', '10')
+    return res.status(429).json({ error: 'Too many live chat connections' })
+  }
   res.status(200).set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-store',
@@ -950,7 +1023,7 @@ app.post('/api/chat/messages', (req, res) => {
   const now = Date.now()
   const recent = (chatAttempts.get(key) || []).filter((time) => now - time < 30_000)
   if (recent.length >= 6 || (recent.length && now - recent.at(-1) < 750)) {
-    chatAttempts.set(key, recent)
+    setBoundedMapValue(chatAttempts, key, recent)
     res.setHeader('Retry-After', '2')
     return res.status(429).json({ error: 'Slow down before posting again' })
   }
@@ -959,7 +1032,7 @@ app.post('/api/chat/messages', (req, res) => {
   const text = chatText(req.body?.text, 120)
   if (name.length < 2 || text.length < 1) return res.status(400).json({ error: 'Enter a name and message' })
   recent.push(now)
-  chatAttempts.set(key, recent)
+  setBoundedMapValue(chatAttempts, key, recent)
   const result = chatDb.prepare('INSERT INTO messages (name, text, created_at) VALUES (?, ?, ?)').run(name, text, now)
   const message = chatDb.prepare('SELECT id, name, text, system, created_at FROM messages WHERE id = ?').get(result.lastInsertRowid)
   const output = chatRow(message)
@@ -974,6 +1047,10 @@ app.get('/api/radio/status', (_req, res) => {
 
 app.get('/radio/stream', (req, res) => {
   if (!radio.trackCount) return res.status(503).json({ error: 'No media files are available' })
+  if (radio.listeners.size >= maximumRadioListeners || !reserveConnection(radioConnectionsByIp, req.ip, maximumRadioConnectionsPerIp, res)) {
+    res.setHeader('Retry-After', '10')
+    return res.status(429).json({ error: 'Too many radio stream connections' })
+  }
   const includeMetadata = req.get('Icy-MetaData') === '1'
   res.status(200)
   res.set({
@@ -1218,14 +1295,18 @@ app.get(['/submit', '/submit/'], (_req, res) => sendUncachedFile(res, path.join(
 app.get('/{*path}', (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'index.html')))
 
 app.use((error, req, res, _next) => {
-  console.error(error)
   if (error?.type === 'entity.too.large' && req.originalUrl.startsWith('/api/v1/')) return res.status(413).json({ error: { code: 'body_too_large', message: 'Request body must be no larger than 96 KB' } })
-  if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'Image must be no larger than 5 MB' })
+  if (error?.type === 'entity.too.large' && /\/api\/admin\/venues\/[^/]+\/image(?:\?|$)/.test(req.originalUrl)) return res.status(413).json({ error: 'Image must be no larger than 5 MB' })
+  if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'Request body must be no larger than 96 KB' })
   if (error instanceof SyntaxError && error?.type === 'entity.parse.failed') return res.status(400).json({ error: { code: 'invalid_json', message: 'Request body must contain valid JSON' } })
+  if (error instanceof URIError || error?.status === 400) return res.status(400).json({ error: 'Malformed request' })
+  const clientErrorStatus = Number(error?.status || error?.statusCode || (error?.code === 'ENOENT' ? 404 : 0))
+  if (Number.isInteger(clientErrorStatus) && clientErrorStatus > 400 && clientErrorStatus < 500) return res.status(clientErrorStatus).json({ error: clientErrorStatus === 404 ? 'Not found' : 'Request rejected' })
+  console.error(error)
   res.status(500).json({ error: 'Internal server error' })
 })
 
 const server = app.listen(port, host, () => console.log(`TCPM&M listening on http://${host}:${port}`))
-const shutdown = () => { radio.stop(); for (const listener of chatListeners) listener.end(); server.close(() => { submissionsDb.close(); chatDb.close(); db.close(); process.exit(0) }) }
+const shutdown = () => { clearInterval(abuseCleanupTimer); radio.stop(); for (const listener of chatListeners) listener.end(); server.close(() => { submissionsDb.close(); chatDb.close(); db.close(); process.exit(0) }) }
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
