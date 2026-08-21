@@ -7,6 +7,7 @@ import Database from 'better-sqlite3'
 import { config as loadEnv } from 'dotenv'
 import express from 'express'
 import sanitizeHtml from 'sanitize-html'
+import { createPublicApi } from './public-api.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 loadEnv({ path: path.join(root, '.env'), quiet: true })
@@ -764,6 +765,8 @@ const venueFields = (body) => {
   }
   return item
 }
+
+app.use('/api/public/v1', createPublicApi({ db, genres })) // Keeps the unauthenticated read-only app API isolated from the authenticated show publisher routes.
 
 app.get('/api/content', (_req, res) => {
   const events = db.prepare('SELECT * FROM events WHERE published = 1 ORDER BY event_date, id').all()

@@ -9,7 +9,15 @@ npm.cmd test
 npm.cmd run build
 ```
 
-The authorization coverage starts a real server against disposable databases. It verifies that organizers can use **SITE**, **MAIL**, **EVENTS**, **VENUES**, and **NEWS**, while user-management and API-key routes return `403`. It also verifies that sensitive account and key metadata is omitted from organizer content responses and that the final full administrator cannot be demoted.
+The integration coverage starts real servers against disposable databases. It verifies that organizers can use **SITE**, **MAIL**, **EVENTS**, **VENUES**, and **NEWS**, while user-management and API-key routes return `403`. It also verifies that sensitive account and key metadata is omitted from organizer content responses and that the final full administrator cannot be demoted.
+
+The public API coverage creates published and draft events, venues, and news through the real administrator routes. It then verifies unauthenticated discovery and first-sync responses, published-only visibility, filters, pagination, detail records, article-body behavior, CORS, caching, structured errors, preflight handling, and rejection of write methods.
+
+For a focused public API run:
+
+```powershell
+node --test test/public-api.test.js
+```
 
 ## Manual role check
 

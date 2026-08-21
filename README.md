@@ -13,6 +13,7 @@ An original three-pane community site scaffold for the Kennewick, Pasco, and Ric
 - Integrated Node/SQLite content API and protected JavaScript admin panel
 - Database-backed public show submissions with an admin review inbox
 - Hashed-key show publishing API with validation, rate limits, and idempotent retries
+- Versioned unauthenticated read-only API for published events, venues, news, and public site settings
 - Two-tier operator management with organizer/admin roles, password resets, and session revocation
 
 ## Development
@@ -77,6 +78,12 @@ npm run generate:show-api-key -- friend
 Share only the generated Bearer token with that tester. For command-line keys, add the generated `name:sha256-hash` entry to `SHOW_API_KEYS` in `.env`; multiple entries are comma-separated. Environment-managed keys appear as read-only entries in the admin panel and require removing the entry and restarting to revoke.
 
 The server stores only credential hashes, requires an idempotency key on every create request, validates an explicit JSON schema, and limits each key to 60 requests per hour. Keep the API behind HTTPS in production. Give testers the standalone [Show API testing guide](SHOW_API_TESTING.md), which includes curl and PowerShell examples, field rules, expected responses, and safe draft-testing instructions.
+
+## Public site API
+
+Phone apps and other public clients can read published site content without a credential under `/api/public/v1`. The namespace is isolated from the authenticated `/api/v1/shows` publisher API, accepts only `GET`, `HEAD`, and `OPTIONS`, and never exposes drafts. It includes a first-sync content snapshot plus paginated event, venue, and news collection and detail routes. Public responses allow cross-origin reads and are cacheable for one minute.
+
+See the [Public Site API guide](PUBLIC_API.md) for the complete route, filter, response, caching, and error contract.
 
 ## Radio
 
