@@ -283,6 +283,7 @@ db.exec(`
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('organizer','admin')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -338,7 +339,30 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS show_api_keys (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    revoked_at TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS show_api_keys_active_name
+    ON show_api_keys(name COLLATE NOCASE) WHERE revoked_at IS NULL;
+  CREATE TABLE IF NOT EXISTS show_api_requests (
+    api_key_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    event_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (api_key_id, idempotency_key)
+  );
 `)
+
+const adminColumns = new Set(db.prepare('PRAGMA table_info(admins)').all().map((column) => column.name))
+if (!adminColumns.has('role')) db.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('organizer','admin'))") // Promotes every legacy account to full admin while adding the organizer tier safely.
 
 const eventGenreSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'").get()?.sql || ''
 if (!genres.every((genre) => eventGenreSchema.includes(`'${genre}'`))) {
@@ -499,15 +523,84 @@ const safeEqual = (a, b) => {
   return left.length === right.length && crypto.timingSafeEqual(left, right)
 }
 
+const environmentShowApiKeys = String(process.env.SHOW_API_KEYS || '').split(',').filter(Boolean).map((entry) => {
+  const separator = entry.indexOf(':')
+  const id = entry.slice(0, separator).trim()
+  const hash = entry.slice(separator + 1).trim().toLowerCase()
+  if (separator < 1 || !/^[A-Za-z0-9_-]{1,32}$/.test(id) || !/^[a-f0-9]{64}$/.test(hash)) {
+    throw new Error('SHOW_API_KEYS must contain comma-separated name:sha256-hash entries')
+  }
+  return { id, hash }
+}) // Loads only hashed API credentials so a copied environment file cannot be used as a Bearer token.
+if (new Set(environmentShowApiKeys.map(({ id }) => id)).size !== environmentShowApiKeys.length) throw new Error('SHOW_API_KEYS names must be unique')
+
+const listShowApiKeys = () => {
+  const stored = db.prepare(`SELECT show_api_keys.id, show_api_keys.name, show_api_keys.created_at,
+    show_api_keys.last_used_at, show_api_keys.request_count, admins.username AS created_by
+    FROM show_api_keys LEFT JOIN admins ON admins.id = show_api_keys.created_by
+    WHERE show_api_keys.revoked_at IS NULL ORDER BY show_api_keys.created_at DESC`).all()
+    .map((item) => ({ ...item, source: 'site' }))
+  const configured = environmentShowApiKeys.map((item) => ({
+    id: `environment:${item.id}`, name: item.id, created_at: null, last_used_at: null,
+    request_count: null, created_by: null, source: 'environment'
+  }))
+  return [...stored, ...configured]
+} // Returns safe key metadata for the control panel without ever exposing a credential hash or secret.
+
+const failedShowApiAttempts = new Map()
+const showApiAttempts = new Map()
+const pruneAttempts = (attempts, now, windowMs) => attempts.filter((time) => now - time < windowMs) // Keeps each in-memory rate-limit bucket bounded to its active time window.
+const requireShowApiKey = (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store')
+  const now = Date.now()
+  const failed = pruneAttempts(failedShowApiAttempts.get(req.ip) || [], now, 15 * 60_000)
+  if (failed.length >= 20) {
+    failedShowApiAttempts.set(req.ip, failed)
+    res.setHeader('Retry-After', '900')
+    return res.status(429).json({ error: { code: 'rate_limited', message: 'Too many authentication attempts; try again later' } })
+  }
+  const authorization = req.get('Authorization') || ''
+  const match = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,256})$/)
+  const presentedHash = tokenHash(match?.[1] || '')
+  const storedCredential = db.prepare('SELECT id FROM show_api_keys WHERE token_hash = ? AND revoked_at IS NULL').get(presentedHash)
+  const configuredCredential = environmentShowApiKeys.find((item) => safeEqual(presentedHash, item.hash))
+  const credential = storedCredential
+    ? { ledgerId: `site:${storedCredential.id}`, storedId: storedCredential.id }
+    : configuredCredential ? { ledgerId: `environment:${configuredCredential.id}` } : null
+  if (!credential) {
+    failed.push(now)
+    failedShowApiAttempts.set(req.ip, failed)
+    res.setHeader('WWW-Authenticate', 'Bearer realm="show-api"')
+    return res.status(401).json({ error: { code: 'invalid_token', message: 'A valid show API Bearer token is required' } })
+  }
+  failedShowApiAttempts.delete(req.ip)
+  const recent = pruneAttempts(showApiAttempts.get(credential.ledgerId) || [], now, 60 * 60_000)
+  if (recent.length >= 60) {
+    showApiAttempts.set(credential.ledgerId, recent)
+    res.setHeader('Retry-After', '3600')
+    return res.status(429).json({ error: { code: 'rate_limited', message: 'Show API rate limit exceeded; try again later' } })
+  }
+  recent.push(now)
+  showApiAttempts.set(credential.ledgerId, recent)
+  if (credential.storedId) db.prepare('UPDATE show_api_keys SET last_used_at = CURRENT_TIMESTAMP, request_count = request_count + 1 WHERE id = ?').run(credential.storedId)
+  req.showApiKeyId = credential.ledgerId
+  next()
+} // Authenticates machine clients with timing-safe hash comparisons and applies separate abuse limits.
+
 const requireAuth = (req, res, next) => {
   const token = parseCookies(req.headers.cookie).tcpmm_session
   if (!token) return res.status(401).json({ error: 'Authentication required' })
-  const session = db.prepare(`SELECT sessions.*, admins.username FROM sessions
+  const session = db.prepare(`SELECT sessions.*, admins.username, admins.role FROM sessions
     JOIN admins ON admins.id = sessions.admin_id WHERE token_hash = ? AND expires_at > ?`).get(tokenHash(token), Date.now())
   if (!session) return res.status(401).json({ error: 'Session expired' })
   req.session = session
   next()
-}
+} // Refreshes the account role from the database on every request so permission changes take effect immediately.
+
+const requireAdministrator = (req, res, next) => {
+  if (req.session.role !== 'admin') return res.status(403).json({ error: 'Administrator access required' })
+  next()
+} // Keeps user management and API-key controls behind the full administrator tier.
 
 const requireCsrf = (req, res, next) => {
   if (req.get('X-CSRF-Token') !== req.session.csrf_token) return res.status(403).json({ error: 'Invalid CSRF token' })
@@ -535,10 +628,10 @@ app.post('/api/admin/login', (req, res) => {
   db.prepare('INSERT INTO sessions (token_hash, admin_id, csrf_token, expires_at) VALUES (?, ?, ?, ?)').run(tokenHash(token), admin.id, csrf, expires)
   const secure = req.secure || req.get('x-forwarded-proto') === 'https'
   res.setHeader('Set-Cookie', `tcpmm_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${secure ? '; Secure' : ''}`)
-  res.json({ username: admin.username, csrfToken: csrf })
+  res.json({ id: admin.id, username: admin.username, role: admin.role, csrfToken: csrf })
 })
 
-app.get('/api/admin/session', requireAuth, (req, res) => res.json({ id: req.session.admin_id, username: req.session.username, csrfToken: req.session.csrf_token }))
+app.get('/api/admin/session', requireAuth, (req, res) => res.json({ id: req.session.admin_id, username: req.session.username, role: req.session.role, csrfToken: req.session.csrf_token }))
 app.post('/api/admin/logout', requireAuth, requireCsrf, (req, res) => {
   db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(req.session.token_hash)
   res.setHeader('Set-Cookie', 'tcpmm_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0')
@@ -548,17 +641,19 @@ app.post('/api/admin/logout', requireAuth, requireCsrf, (req, res) => {
 const adminFields = (body, passwordRequired = true) => {
   const username = String(body?.username || '').trim()
   const password = String(body?.password || '')
+  const role = String(body?.role || '')
   if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) throw new Error('Username must be 3–32 letters, numbers, dots, dashes, or underscores')
   if ((passwordRequired || password) && (password.length < 12 || password.length > 128)) throw new Error('Password must be 12–128 characters')
-  return { username, password }
-}
+  if (!['organizer', 'admin'].includes(role)) throw new Error('Role must be organizer or admin')
+  return { username, password, role }
+} // Validates both account credentials and the explicit two-tier role assignment.
 
-app.post('/api/admin/users', requireAuth, requireCsrf, (req, res) => {
+app.post('/api/admin/users', requireAuth, requireAdministrator, requireCsrf, (req, res) => {
   try {
-    const { username, password } = adminFields(req.body)
+    const { username, password, role } = adminFields(req.body)
     const salt = crypto.randomBytes(24).toString('hex')
-    const result = db.prepare('INSERT INTO admins (username, password_hash, password_salt) VALUES (?, ?, ?)')
-      .run(username, hashPassword(password, salt), salt)
+    const result = db.prepare('INSERT INTO admins (username, password_hash, password_salt, role) VALUES (?, ?, ?, ?)')
+      .run(username, hashPassword(password, salt), salt, role)
     res.status(201).json({ id: result.lastInsertRowid })
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Username already exists' })
@@ -566,26 +661,29 @@ app.post('/api/admin/users', requireAuth, requireCsrf, (req, res) => {
   }
 })
 
-app.put('/api/admin/users/:id', requireAuth, requireCsrf, (req, res) => {
+app.put('/api/admin/users/:id', requireAuth, requireAdministrator, requireCsrf, (req, res) => {
   try {
     const id = Number(req.params.id)
     if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid administrator ID' })
-    const { username, password } = adminFields(req.body, false)
+    const { username, password, role } = adminFields(req.body, false)
     const updateAdmin = db.transaction(() => {
-      const admin = db.prepare('SELECT id FROM admins WHERE id = ?').get(id)
-      if (!admin) return false
+      const admin = db.prepare('SELECT id, role FROM admins WHERE id = ?').get(id)
+      if (!admin) return 'missing'
+      if (admin.role === 'admin' && role !== 'admin' && db.prepare("SELECT COUNT(*) AS count FROM admins WHERE role = 'admin'").get().count <= 1) return 'last-admin'
       if (password) {
         const salt = crypto.randomBytes(24).toString('hex')
-        db.prepare('UPDATE admins SET username = ?, password_hash = ?, password_salt = ? WHERE id = ?')
-          .run(username, hashPassword(password, salt), salt, id)
+        db.prepare('UPDATE admins SET username = ?, password_hash = ?, password_salt = ?, role = ? WHERE id = ?')
+          .run(username, hashPassword(password, salt), salt, role, id)
         if (id === req.session.admin_id) db.prepare('DELETE FROM sessions WHERE admin_id = ? AND token_hash <> ?').run(id, req.session.token_hash)
         else db.prepare('DELETE FROM sessions WHERE admin_id = ?').run(id)
       } else {
-        db.prepare('UPDATE admins SET username = ? WHERE id = ?').run(username, id)
+        db.prepare('UPDATE admins SET username = ?, role = ? WHERE id = ?').run(username, role, id)
       }
-      return true
+      return 'updated'
     })
-    if (!updateAdmin()) return res.status(404).json({ error: 'Administrator not found' })
+    const result = updateAdmin()
+    if (result === 'missing') return res.status(404).json({ error: 'Administrator not found' })
+    if (result === 'last-admin') return res.status(400).json({ error: 'The last administrator cannot become an organizer' })
     res.status(204).end()
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Username already exists' })
@@ -593,12 +691,14 @@ app.put('/api/admin/users/:id', requireAuth, requireCsrf, (req, res) => {
   }
 })
 
-app.delete('/api/admin/users/:id', requireAuth, requireCsrf, (req, res) => {
+app.delete('/api/admin/users/:id', requireAuth, requireAdministrator, requireCsrf, (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid administrator ID' })
   if (id === req.session.admin_id) return res.status(400).json({ error: 'You cannot delete your own account' })
   const deleteAdmin = db.transaction(() => {
-    if (db.prepare('SELECT COUNT(*) AS count FROM admins').get().count <= 1) return 'last'
+    const account = db.prepare('SELECT role FROM admins WHERE id = ?').get(id)
+    if (!account) return 'missing'
+    if (account.role === 'admin' && db.prepare("SELECT COUNT(*) AS count FROM admins WHERE role = 'admin'").get().count <= 1) return 'last'
     return db.prepare('DELETE FROM admins WHERE id = ?').run(id).changes ? 'deleted' : 'missing'
   })
   const result = deleteAdmin()
@@ -606,6 +706,35 @@ app.delete('/api/admin/users/:id', requireAuth, requireCsrf, (req, res) => {
   if (result === 'missing') return res.status(404).json({ error: 'Administrator not found' })
   res.status(204).end()
 })
+
+const showApiKeyName = (value) => typeof value === 'string'
+  ? value.normalize('NFKC').replace(/[\u0000-\u001F\u007F]/g, '').trim()
+  : '' // Normalizes the human-readable key label before it reaches the security audit data.
+
+app.post('/api/admin/show-api-keys', requireAuth, requireAdministrator, requireCsrf, (req, res) => {
+  const name = showApiKeyName(req.body?.name)
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _.\-]{1,47}$/.test(name)) return res.status(400).json({ error: 'Key name must be 2–48 letters, numbers, spaces, dots, dashes, or underscores' })
+  const id = crypto.randomBytes(12).toString('base64url')
+  const token = `tcpmm_${crypto.randomBytes(32).toString('base64url')}`
+  try {
+    db.prepare('INSERT INTO show_api_keys (id, name, token_hash, created_by) VALUES (?, ?, ?, ?)')
+      .run(id, name, tokenHash(token), req.session.admin_id)
+    const key = listShowApiKeys().find((item) => item.source === 'site' && item.id === id)
+    res.setHeader('Cache-Control', 'no-store')
+    res.status(201).json({ key, token })
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'An active API key already uses that name' })
+    console.error('Show API key creation failed:', error)
+    res.status(500).json({ error: 'The API key could not be created' })
+  }
+}) // Generates a publisher secret server-side and returns the plaintext exactly once to the authenticated administrator.
+
+app.delete('/api/admin/show-api-keys/:id', requireAuth, requireAdministrator, requireCsrf, (req, res) => {
+  if (!/^[A-Za-z0-9_-]{16}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid API key ID' })
+  const result = db.prepare('UPDATE show_api_keys SET revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL').run(req.params.id)
+  if (!result.changes) return res.status(404).json({ error: 'Active API key not found' })
+  res.status(204).end()
+}) // Revokes a database-managed publisher credential immediately while preserving its audit history.
 
 const eventFields = (body) => {
   const item = {
@@ -648,6 +777,82 @@ app.get('/api/content', (_req, res) => {
   })
   res.json({ events, news, venues, settings })
 })
+
+const showApiText = (value) => typeof value === 'string'
+  ? value.normalize('NFKC').replace(/[\u0000-\u001F\u007F]/g, '').trim()
+  : '' // Normalizes API text and strips control characters before validation and storage.
+const showApiFields = (body) => {
+  const errors = {}
+  const allowed = new Set(['event_date', 'title', 'venue', 'city', 'lineup', 'genre', 'price', 'doors', 'featured', 'published'])
+  const textLimits = { event_date: 10, title: 120, venue: 120, city: 80, lineup: 500, genre: 20, price: 40, doors: 40 }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) errors.body = 'Request body must be a JSON object'
+  for (const field of Object.keys(body || {})) if (!allowed.has(field)) errors[field] = 'Unknown field'
+  const item = {
+    event_date: showApiText(body?.event_date), title: showApiText(body?.title),
+    venue: showApiText(body?.venue), city: showApiText(body?.city),
+    lineup: showApiText(body?.lineup), genre: showApiText(body?.genre).toLowerCase(),
+    price: showApiText(body?.price), doors: showApiText(body?.doors),
+    featured: body?.featured === true ? 1 : 0, published: body?.published === false ? 0 : 1
+  }
+  for (const [field, maximum] of Object.entries(textLimits)) {
+    if (field in (body || {}) && typeof body[field] !== 'string') errors[field] = 'Use a JSON string'
+    else if (item[field].length > maximum) errors[field] = `Must be no longer than ${maximum} characters`
+  }
+  const date = new Date(`${item.event_date}T12:00:00Z`)
+  if (!errors.event_date && (!/^\d{4}-\d{2}-\d{2}$/.test(item.event_date) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== item.event_date)) errors.event_date = 'Use a real calendar date in YYYY-MM-DD format'
+  for (const field of ['title', 'venue', 'city', 'lineup']) if (!item[field] && !errors[field]) errors[field] = 'This field is required'
+  if (!errors.genre && !isGenre(item.genre)) errors.genre = `Use one of: ${genres.join(', ')}`
+  if ('featured' in (body || {}) && typeof body.featured !== 'boolean') errors.featured = 'Use a JSON boolean'
+  if ('published' in (body || {}) && typeof body.published !== 'boolean') errors.published = 'Use a JSON boolean'
+  if (Object.keys(errors).length) {
+    const error = new Error('The show payload is invalid')
+    error.fields = errors
+    throw error
+  }
+  return item
+} // Applies an explicit schema to trusted publisher requests and reports every invalid field together.
+
+const insertShowFromApi = db.transaction((apiKeyId, idempotencyKey, requestHash, item) => {
+  const previous = db.prepare('SELECT event_id, request_hash FROM show_api_requests WHERE api_key_id = ? AND idempotency_key = ?').get(apiKeyId, idempotencyKey)
+  if (previous) return { ...previous, replayed: true }
+  const result = db.prepare(`INSERT INTO events (event_date,title,venue,city,lineup,genre,price,doors,featured,published)
+    VALUES (@event_date,@title,@venue,@city,@lineup,@genre,@price,@doors,@featured,@published)`).run(item)
+  db.prepare('INSERT INTO show_api_requests (api_key_id, idempotency_key, request_hash, event_id) VALUES (?, ?, ?, ?)')
+    .run(apiKeyId, idempotencyKey, requestHash, result.lastInsertRowid)
+  return { event_id: result.lastInsertRowid, request_hash: requestHash, replayed: false }
+}) // Commits the show and its retry record atomically so network retries cannot create duplicates.
+
+app.post('/api/v1/shows', requireShowApiKey, (req, res) => {
+  if (!req.is('application/json')) return res.status(415).json({ error: { code: 'unsupported_media_type', message: 'Content-Type must be application/json' } })
+  const idempotencyKey = req.get('Idempotency-Key') || ''
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+    return res.status(400).json({ error: { code: 'invalid_idempotency_key', message: 'Idempotency-Key must be 8-128 letters, numbers, dots, underscores, colons, or dashes' } })
+  }
+  try {
+    const item = showApiFields(req.body)
+    const requestHash = tokenHash(JSON.stringify(item))
+    const result = insertShowFromApi(req.showApiKeyId, idempotencyKey, requestHash, item)
+    if (result.replayed && !safeEqual(result.request_hash, requestHash)) {
+      return res.status(409).json({ error: { code: 'idempotency_conflict', message: 'That Idempotency-Key was already used with a different show payload' } })
+    }
+    const show = db.prepare('SELECT id, event_date, title, venue, city, lineup, genre, price, doors, featured, published, created_at, updated_at FROM events WHERE id = ?').get(result.event_id)
+    if (!show) return res.status(410).json({ error: { code: 'show_deleted', message: 'This idempotent request succeeded previously, but its show has since been deleted' } })
+    res.location(`/api/v1/shows/${result.event_id}`)
+    res.status(result.replayed ? 200 : 201).json({ show, replayed: result.replayed })
+  } catch (error) {
+    if (error.fields) return res.status(400).json({ error: { code: 'validation_failed', message: error.message, fields: error.fields } })
+    console.error('Show API insert failed:', error)
+    res.status(500).json({ error: { code: 'internal_error', message: 'The show could not be saved' } })
+  }
+}) // Creates a calendar show for an authenticated publisher with safe retry semantics.
+
+app.get('/api/v1/shows/:id', requireShowApiKey, (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: { code: 'invalid_id', message: 'Show ID must be a positive integer' } })
+  const show = db.prepare('SELECT id, event_date, title, venue, city, lineup, genre, price, doors, featured, published, created_at, updated_at FROM events WHERE id = ?').get(id)
+  if (!show) return res.status(404).json({ error: { code: 'not_found', message: 'Show not found' } })
+  res.json({ show })
+}) // Lets an API tester verify the exact stored record without using an administrator session.
 
 const submissionAttempts = new Map()
 const submissionTokens = new Map()
@@ -782,16 +987,22 @@ app.get('/radio/stream', (req, res) => {
   radio.addListener(res, includeMetadata)
 })
 
-app.get('/api/admin/content', requireAuth, (_req, res) => {
+app.get('/api/admin/content', requireAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
   res.json({
+    username: req.session.username,
+    role: req.session.role,
     events: db.prepare('SELECT * FROM events ORDER BY event_date, id').all(),
     news: db.prepare('SELECT * FROM news ORDER BY featured DESC, id').all(),
     venues: db.prepare('SELECT * FROM venues ORDER BY featured DESC, name COLLATE NOCASE, id').all(),
     submissions: submissionsDb.prepare('SELECT * FROM show_submissions ORDER BY reviewed, created_at DESC, id DESC').all(),
-    admins: db.prepare('SELECT id, username, created_at FROM admins ORDER BY username COLLATE NOCASE, id').all(),
-    settings: Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value]))
+    settings: Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map(({ key, value }) => [key, value])),
+    ...(req.session.role === 'admin' ? {
+      admins: db.prepare('SELECT id, username, role, created_at FROM admins ORDER BY username COLLATE NOCASE, id').all(),
+      showApiKeys: listShowApiKeys()
+    } : {})
   })
-})
+}) // Omits user and API-key metadata entirely when an organizer loads the shared control panel.
 
 app.get('/api/admin/submissions', requireAuth, (_req, res) => {
   res.setHeader('Cache-Control', 'no-store')
@@ -998,9 +1209,11 @@ app.get(['/admin', '/admin/'], (_req, res) => sendUncachedFile(res, path.join(ro
 app.get(['/submit', '/submit/'], (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'submit', 'index.html')))
 app.get('/{*path}', (_req, res) => sendUncachedFile(res, path.join(root, 'dist', 'index.html')))
 
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
   console.error(error)
+  if (error?.type === 'entity.too.large' && req.originalUrl.startsWith('/api/v1/')) return res.status(413).json({ error: { code: 'body_too_large', message: 'Request body must be no larger than 96 KB' } })
   if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'Image must be no larger than 5 MB' })
+  if (error instanceof SyntaxError && error?.type === 'entity.parse.failed') return res.status(400).json({ error: { code: 'invalid_json', message: 'Request body must contain valid JSON' } })
   res.status(500).json({ error: 'Internal server error' })
 })
 

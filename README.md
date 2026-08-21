@@ -12,7 +12,8 @@ An original three-pane community site scaffold for the Kennewick, Pasco, and Ric
 - Accessible semantic markup, keyboard controls, and reduced-motion support
 - Integrated Node/SQLite content API and protected JavaScript admin panel
 - Database-backed public show submissions with an admin review inbox
-- Multi-administrator management with password resets and session revocation
+- Hashed-key show publishing API with validation, rate limits, and idempotent retries
+- Two-tier operator management with organizer/admin roles, password resets, and session revocation
 
 ## Development
 
@@ -33,7 +34,7 @@ npm start
 
 The Node process loads `.env`, then serves the built site, `/api` endpoints, and the control panel at `/admin`. On first start it creates the SQLite database and initial administrator. `ADMIN_INITIAL_PASSWORD` must contain at least 12 characters and should be removed from `.env` after that first successful start. Existing process environment variables take precedence over values in `.env`.
 
-Authenticated administrators can add, rename, reset passwords for, and remove other administrators from the **USERS** panel. Password resets revoke that administrator's existing sessions. An administrator cannot delete their own account or the final administrator account.
+The control panel has two operator tiers. Organizers can manage **SITE**, **MAIL**, **EVENTS**, **VENUES**, and **NEWS**. Full administrators can do everything organizers can, plus manage accounts in **USERS** and publishing credentials in **API KEYS**. Existing accounts are migrated to the full administrator role. Password resets revoke that operator's existing sessions, role changes take effect on the next request, and the final full administrator cannot be demoted or deleted.
 
 ## Deployment architecture
 
@@ -44,6 +45,20 @@ The application VM owns Node, SQLite, and all site files. The separate Nginx VM 
 Initial listings are seeded into SQLite and can be changed in `/admin`. Events, news, venues, hero copy, and radio status use `tcpmm.sqlite`. Venue photos are validated JPEG, PNG, or WebP files (up to 5 MB) stored under the configured data directory, while their paths and venue details remain in SQLite. The dedicated `/submit/` page collects the same calendar fields as an event plus venue address, description, and contact information using a short-lived, one-time form token. New submissions are isolated in `tcpmm-submissions.sqlite` and appear in the admin **MAIL** inbox. An administrator can publish a complete submission to the live event calendar in one step, then edit the resulting event normally. The public multi-user chat stores messages in the separate `tcpmm-chat.sqlite` database.
 
 Event listings and show submissions support punk, metal, hardcore, rock, alternative, EDM, rap, and other as genre categories.
+
+## Show publishing API
+
+Trusted testers and integrations can create calendar shows through the versioned API. While signed in as a full administrator, open **API KEYS**, choose **GENERATE KEY**, and give every person or integration a separate credential. Organizers cannot view or change API credentials. The secret is displayed once; copy it before dismissing the notice. The panel shows usage metadata and revokes site-managed keys immediately without a service restart.
+
+For unattended provisioning, a server operator can still generate an environment-managed credential from the command line:
+
+```sh
+npm run generate:show-api-key -- friend
+```
+
+Share only the generated Bearer token with that tester. For command-line keys, add the generated `name:sha256-hash` entry to `SHOW_API_KEYS` in `.env`; multiple entries are comma-separated. Environment-managed keys appear as read-only entries in the admin panel and require removing the entry and restarting to revoke.
+
+The server stores only credential hashes, requires an idempotency key on every create request, validates an explicit JSON schema, and limits each key to 60 requests per hour. Keep the API behind HTTPS in production. Give testers the standalone [Show API testing guide](SHOW_API_TESTING.md), which includes curl and PowerShell examples, field rules, expected responses, and safe draft-testing instructions.
 
 ## Radio
 

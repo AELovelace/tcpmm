@@ -1,24 +1,43 @@
 let csrfToken = ''
 let currentAdminId = null
-let content = { events: [], news: [], venues: [], submissions: [], admins: [], settings: {} }
+let currentUsername = ''
+let currentRole = ''
+let content = { events: [], news: [], venues: [], submissions: [], admins: [], showApiKeys: [], settings: {} }
 let submissionFilter = 'all'
 let submissionsLoading = false
 const $ = (selector) => document.querySelector(selector)
 const status = (message, error = false) => { const node = $('#status'); node.textContent = message; node.style.color = error ? '#ff7187' : '#ff2948' }
 const api = async (url, options = {}) => {
   const response = await fetch(url, { cache: 'no-store', ...options, headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers } })
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `Request failed: ${response.status}`) }
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(typeof body.error === 'string' ? body.error : body.error?.message || `Request failed: ${response.status}`) }
   return response.status === 204 ? null : response.json()
 }
 const formObject = (form) => Object.fromEntries(new FormData(form).entries())
+const applyRoleAccess = () => {
+  const administrator = currentRole === 'admin'
+  document.querySelectorAll('nav [data-admin-only]').forEach((node) => { node.hidden = !administrator })
+  if (!administrator && (!$('#users-view').hidden || !$('#api-keys-view').hidden)) document.querySelector('nav button[data-view="settings"]').click()
+  if (!administrator) document.querySelectorAll('.view[data-admin-only]').forEach((node) => { node.hidden = true })
+} // Removes privileged navigation and views for organizers while the server remains the final enforcement boundary.
 const setAuthenticated = async (session) => {
   csrfToken = session.csrfToken
   currentAdminId = session.id
-  $('#operator').textContent = `OPERATOR: ${session.username}`
+  currentUsername = session.username
+  currentRole = session.role
+  $('#operator').textContent = `OPERATOR: ${currentUsername} · ${currentRole.toUpperCase()}`
   $('#logout').hidden = false; $('#login-view').hidden = true; $('#control-view').hidden = false
+  applyRoleAccess()
   await loadContent()
 }
-const loadContent = async () => { content = await api('/api/admin/content'); fillSettings(); renderSubmissions(); renderEvents(); renderVenues(); renderNews(); renderUsers() }
+const loadContent = async () => {
+  content = await api('/api/admin/content')
+  currentUsername = content.username
+  currentRole = content.role
+  $('#operator').textContent = `OPERATOR: ${currentUsername} · ${currentRole.toUpperCase()}`
+  applyRoleAccess()
+  fillSettings(); renderSubmissions(); renderEvents(); renderVenues(); renderNews()
+  if (currentRole === 'admin') { renderUsers(); renderApiKeys() }
+} // Loads common organizational data for both tiers and renders sensitive data only for full administrators.
 const fillSettings = () => Object.entries(content.settings).forEach(([key, value]) => { const field = $(`#settings-form [name="${key}"]`); if (field) field.value = value })
 const renderEvents = () => { $('#event-list').innerHTML = content.events.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${item.event_date} // ${escapeHtml(item.venue)}, ${escapeHtml(item.city)} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div><button data-edit-event="${item.id}">EDIT</button><button class="danger" data-delete-event="${item.id}">DELETE</button></div></article>`).join('') }
 const renderNews = () => { $('#news-list').innerHTML = content.news.map((item) => `<article class="record"><div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.label)} · ${item.body_html ? 'STATIC ARTICLE' : 'LINK ONLY'} ${item.published ? '' : '<b class="draft">[DRAFT]</b>'}</span></div><div>${item.body_html && item.published ? `<a class="button-link" href="${escapeHtml(item.link)}" target="_blank">VIEW ↗</a>` : ''}<button data-edit-news="${item.id}">EDIT</button><button class="danger" data-delete-news="${item.id}">DELETE</button></div></article>`).join('') }
@@ -51,7 +70,14 @@ const loadSubmissions = async (announce = false) => {
   } catch (error) { if (announce) status(error.message, true) }
   finally { submissionsLoading = false }
 }
-const renderUsers = () => { $('#user-list').innerHTML = content.admins.map((item) => `<article class="record"><div><strong>${escapeHtml(item.username)} ${item.id === currentAdminId ? '<b class="current">[CURRENT]</b>' : ''}</strong><span>CREATED ${escapeHtml(item.created_at)}</span></div><div><button data-edit-user="${item.id}">EDIT</button><button class="danger" data-delete-user="${item.id}"${item.id === currentAdminId ? ' disabled title="You cannot delete your own account"' : ''}>DELETE</button></div></article>`).join('') }
+const renderUsers = () => { $('#user-list').innerHTML = content.admins.map((item) => `<article class="record"><div><strong>${escapeHtml(item.username)} ${item.id === currentAdminId ? '<b class="current">[CURRENT]</b>' : ''}</strong><span>${escapeHtml(item.role.toUpperCase())} · CREATED ${escapeHtml(item.created_at)}</span></div><div><button data-edit-user="${item.id}">EDIT</button><button class="danger" data-delete-user="${item.id}"${item.id === currentAdminId ? ' disabled title="You cannot delete your own account"' : ''}>DELETE</button></div></article>`).join('') }
+const renderApiKeys = () => {
+  $('#api-key-list').innerHTML = content.showApiKeys.length ? content.showApiKeys.map((item) => {
+    if (item.source === 'environment') return `<article class="record"><div><strong>${escapeHtml(item.name)} <b class="api-key-source">[ENV]</b></strong><span class="api-key-meta">SERVER-CONFIGURED · REMOVE FROM SHOW_API_KEYS AND RESTART TO REVOKE</span></div></article>`
+    const usage = item.last_used_at ? `LAST USED ${escapeHtml(item.last_used_at)} · ${item.request_count} REQUEST${item.request_count === 1 ? '' : 'S'}` : 'NEVER USED'
+    return `<article class="record"><div><strong>${escapeHtml(item.name)}</strong><span class="api-key-meta">CREATED ${escapeHtml(item.created_at)} BY ${escapeHtml(item.created_by || 'DELETED ADMIN')} · ${usage}</span></div><div><button class="danger" data-revoke-api-key="${escapeHtml(item.id)}">REVOKE</button></div></article>`
+  }).join('') : '<p class="empty">NO SHOW API KEYS. GENERATE ONE FOR EACH TRUSTED PUBLISHER.</p>'
+} // Renders database keys with usage data and distinguishes legacy environment credentials that need server access to revoke.
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char])
 const openEditor = (type, item = null) => {
   const form = $(`#${type}-form`); form.reset(); form.hidden = false
@@ -77,6 +103,7 @@ const openUserEditor = (item = null) => {
   const form = $('#user-form'); form.reset(); form.hidden = false
   form.elements.namedItem('id').value = item?.id || ''
   form.elements.namedItem('username').value = item?.username || ''
+  form.elements.namedItem('role').value = item?.role || 'organizer'
   form.elements.namedItem('password').required = !item
   $('#password-help').textContent = item ? 'Leave blank to keep current password' : '12–128 characters'
   form.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -94,6 +121,7 @@ $('#new-event').addEventListener('click', () => openEditor('event'))
 $('#new-venue').addEventListener('click', () => openEditor('venue'))
 $('#new-news').addEventListener('click', () => openEditor('news'))
 $('#new-user').addEventListener('click', () => openUserEditor())
+$('#new-api-key').addEventListener('click', () => { const form = $('#api-key-form'); form.reset(); form.hidden = false; form.elements.namedItem('name').focus() })
 const newsTitle = $('#news-form [name="title"]')
 const newsSlug = $('#news-form [name="slug"]')
 const articleEditor = $('#article-editor')
@@ -179,9 +207,34 @@ $('#submission-editor').addEventListener('submit', async (event) => {
 $('#user-form').addEventListener('submit', async (event) => {
   event.preventDefault()
   const form = event.currentTarget; const data = formObject(form); const id = data.id; delete data.id
-  try { await api(`/api/admin/users${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`ADMINISTRATOR ${id ? 'UPDATED' : 'CREATED'}`); await loadContent() }
+  try { await api(`/api/admin/users${id ? `/${id}` : ''}`, { method:id ? 'PUT' : 'POST', body:JSON.stringify(data) }); form.hidden = true; status(`OPERATOR ${id ? 'UPDATED' : 'CREATED'}`); await loadContent() }
   catch (error) { status(error.message, true) }
 })
+$('#api-key-form').addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = event.currentTarget
+  try {
+    const result = await api('/api/admin/show-api-keys', { method: 'POST', body: JSON.stringify(formObject(form)) })
+    form.hidden = true
+    $('#api-key-token').value = result.token
+    $('#api-key-result').hidden = false
+    status('API KEY GENERATED — COPY THE SECRET NOW')
+    await loadContent()
+  } catch (error) { status(error.message, true) }
+}) // Requests server-generated secret material and places it only in the one-time reveal panel.
+$('#copy-api-key').addEventListener('click', async () => {
+  const input = $('#api-key-token')
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(input.value)
+    else { input.select(); document.execCommand('copy'); input.setSelectionRange(0, 0) }
+    status('API KEY COPIED — STORE AND SEND IT SECURELY')
+  } catch { status('COPY FAILED — SELECT THE TOKEN AND COPY IT MANUALLY', true) }
+}) // Copies the one-time token through the secure Clipboard API with a compatibility fallback.
+$('#dismiss-api-key').addEventListener('click', () => {
+  $('#api-key-token').value = ''
+  $('#api-key-result').hidden = true
+  status('ONE-TIME SECRET CLEARED')
+}) // Removes the plaintext secret from the page once the administrator confirms it was saved.
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('button'); if (!button) return
   if (button.dataset.editEvent) openEditor('event', content.events.find((item) => item.id === Number(button.dataset.editEvent)))
@@ -198,6 +251,10 @@ document.addEventListener('click', async (event) => {
     openEditor('event', content.events.find((item) => item.id === Number(button.dataset.editEventFromSubmission)))
   }
   if (button.dataset.reviewSubmission) { try { await api(`/api/admin/submissions/${button.dataset.reviewSubmission}/reviewed`, { method:'PUT', body:JSON.stringify({ reviewed: button.dataset.reviewed !== 'true' }) }); status('SUBMISSION SAVED'); await loadContent() } catch (error) { status(error.message, true) } }
+  if (button.dataset.revokeApiKey && confirm('Revoke this API key immediately? This cannot be undone.')) {
+    try { await api(`/api/admin/show-api-keys/${button.dataset.revokeApiKey}`, { method: 'DELETE' }); status('API KEY REVOKED'); await loadContent() }
+    catch (error) { status(error.message, true) }
+  }
   const type = button.dataset.deleteEvent ? 'events' : button.dataset.deleteVenue ? 'venues' : button.dataset.deleteNews ? 'news' : button.dataset.deleteUser ? 'users' : button.dataset.deleteSubmission ? 'submissions' : null
   const id = button.dataset.deleteEvent || button.dataset.deleteVenue || button.dataset.deleteNews || button.dataset.deleteUser || button.dataset.deleteSubmission
   if (type && id && confirm('Permanently delete this record?')) { try { await api(`/api/admin/${type}/${id}`, { method:'DELETE' }); status('RECORD DELETED'); await loadContent() } catch (error) { status(error.message, true) } }

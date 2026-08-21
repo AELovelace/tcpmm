@@ -21,7 +21,7 @@
       </form>
     </section>
     <section id="control-view" hidden>
-      <nav><button data-view="settings" class="active">SITE</button><button data-view="submissions">MAIL <b id="submission-count"></b></button><button data-view="events">EVENTS</button><button data-view="venues">VENUES</button><button data-view="news">NEWS</button><button data-view="users">USERS</button><a href="/" target="_blank">VIEW SITE ↗</a></nav>
+      <nav><button data-view="settings" class="active">SITE</button><button data-view="submissions">MAIL <b id="submission-count"></b></button><button data-view="events">EVENTS</button><button data-view="venues">VENUES</button><button data-view="news">NEWS</button><button data-view="users" data-admin-only>USERS</button><button data-view="api-keys" data-admin-only>API KEYS</button><a href="/" target="_blank">VIEW SITE ↗</a></nav>
       <p id="status" role="status"></p>
       <section id="settings-view" class="panel view">
         <h2>// SITE + RADIO</h2>
@@ -132,15 +132,31 @@
         </form>
         <div id="venue-list" class="records"></div>
       </section>
-      <section id="users-view" class="panel view" hidden>
-        <div class="title-row"><h2>// ADMINISTRATORS</h2><button id="new-user">+ NEW USER</button></div>
+      <section id="users-view" class="panel view" data-admin-only hidden>
+        <div class="title-row"><h2>// OPERATORS</h2><button id="new-user">+ NEW USER</button></div>
         <form id="user-form" class="form-grid editor" hidden>
           <input type="hidden" name="id" />
           <label>USERNAME<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="off" required /></label>
+          <label>ROLE<select name="role" required><option value="organizer">ORGANIZER — SITE CONTENT ONLY</option><option value="admin">ADMIN — FULL ACCESS</option></select></label>
           <label>PASSWORD <small id="password-help">12–128 characters</small><input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" /></label>
           <div class="actions wide"><button>SAVE USER</button><button type="button" class="secondary cancel">CANCEL</button></div>
         </form>
         <div id="user-list" class="records"></div>
+      </section>
+      <section id="api-keys-view" class="panel view" data-admin-only hidden>
+        <div class="title-row"><h2>// SHOW API KEYS</h2><button id="new-api-key">+ GENERATE KEY</button></div>
+        <p class="api-key-help">Keys let trusted people and integrations publish shows through <code>POST /api/v1/shows</code>. Give every tester their own key so it can be revoked independently.</p>
+        <form id="api-key-form" class="form-grid editor" hidden>
+          <label class="wide">KEY NAME<input name="name" minlength="2" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9 _.\-]{1,47}" placeholder="Friend or integration name" autocomplete="off" required /></label>
+          <div class="actions wide"><button>GENERATE SECRET</button><button type="button" class="secondary cancel">CANCEL</button></div>
+        </form>
+        <section id="api-key-result" class="api-key-result" aria-live="polite" hidden>
+          <strong>COPY THIS SECRET NOW</strong>
+          <p>It cannot be shown again. Send it privately and never put it in a URL, screenshot, or source repository.</p>
+          <div class="api-key-secret"><input id="api-key-token" type="text" readonly spellcheck="false" aria-label="New API Bearer token" /><button id="copy-api-key" type="button">COPY</button></div>
+          <button id="dismiss-api-key" type="button" class="secondary">I SAVED IT</button>
+        </section>
+        <div id="api-key-list" class="records"></div>
       </section>
     </section>
   </main>

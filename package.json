@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1",
     "build": "tsc && vite build",
+    "generate:show-api-key": "node server/generate-show-api-key.js",
+    "test": "node --test",
     "preview": "vite preview",
     "start": "node server/app.js"
   },
