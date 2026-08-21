@@ -36,6 +36,22 @@ The Node process loads `.env`, then serves the built site, `/api` endpoints, and
 
 The control panel has two operator tiers. Organizers can manage **SITE**, **MAIL**, **EVENTS**, **VENUES**, and **NEWS**. Full administrators can do everything organizers can, plus manage accounts in **USERS** and publishing credentials in **API KEYS**. Existing accounts are migrated to the full administrator role. Password resets revoke that operator's existing sessions, role changes take effect on the next request, and the final full administrator cannot be demoted or deleted.
 
+### Administrator recovery
+
+Someone with direct write access to the application database can restore an existing organizer account to the administrator role. The recovery tool makes an online SQLite backup, changes only the requested account, and revokes that account's existing sessions:
+
+```sh
+npm run promote:admin -- doll
+```
+
+On the packaged Fedora deployment, run it as the application service account and specify the production database explicitly:
+
+```sh
+sudo -u tcpmm node /opt/tcpmm/server/promote-user-to-admin.js doll --database /var/lib/tcpmm/tcpmm.sqlite
+```
+
+Sign in again with that account after the command completes. Recovery backups are written to a protected `recovery-backups` directory beside the database. The tool does not reveal or reset passwords and refuses missing or ambiguous account names.
+
 ## Deployment architecture
 
 The application VM owns Node, SQLite, and all site files. The separate Nginx VM terminates TLS and reverse-proxies to the application VM over the private network. See [deploy/README.md](deploy/README.md) for the service, firewall, environment, backup, and proxy instructions.
